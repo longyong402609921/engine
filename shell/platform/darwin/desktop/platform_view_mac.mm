@@ -14,8 +14,8 @@
 #include "flutter/shell/platform/darwin/common/platform_mac.h"
 #include "flutter/shell/platform/darwin/common/process_info_mac.h"
 #include "flutter/shell/platform/darwin/desktop/vsync_waiter_mac.h"
-#include "lib/ftl/command_line.h"
-#include "lib/ftl/synchronization/waitable_event.h"
+#include "lib/fxl/command_line.h"
+#include "lib/fxl/synchronization/waitable_event.h"
 
 namespace shell {
 
@@ -29,19 +29,19 @@ PlatformViewMac::~PlatformViewMac() = default;
 
 void PlatformViewMac::Attach() {
   CreateEngine();
-  PostAddToShellTask();
 }
 
 void PlatformViewMac::SetupAndLoadDart() {
   if (AttemptLaunchFromCommandLineSwitches(&engine())) {
-    // This attempts launching from an FLX bundle that does not contain a
-    // dart snapshot.
+    // This attempts launching from a Flutter assets directory that does not
+    // contain a dart snapshot.
     return;
   }
 
   const auto& command_line = shell::Shell::Shared().GetCommandLine();
 
-  std::string bundle_path = command_line.GetOptionValueWithDefault(FlagForSwitch(Switch::FLX), "");
+  std::string bundle_path =
+      command_line.GetOptionValueWithDefault(FlagForSwitch(Switch::FlutterAssetsDir), "");
   if (!bundle_path.empty()) {
     blink::Threads::UI()->PostTask([ engine = engine().GetWeakPtr(), bundle_path ] {
       if (engine)
@@ -76,10 +76,6 @@ void PlatformViewMac::SetupAndLoadFromSource(const std::string& assets_directory
 intptr_t PlatformViewMac::GLContextFBO() const {
   // Default window bound framebuffer FBO 0.
   return 0;
-}
-
-bool PlatformViewMac::SurfaceSupportsSRGB() const {
-  return false;
 }
 
 bool PlatformViewMac::GLContextMakeCurrent() {
@@ -146,7 +142,7 @@ bool PlatformViewMac::IsValid() const {
 void PlatformViewMac::RunFromSource(const std::string& assets_directory,
                                     const std::string& main,
                                     const std::string& packages) {
-  auto latch = new ftl::ManualResetWaitableEvent();
+  auto latch = new fxl::ManualResetWaitableEvent();
 
   dispatch_async(dispatch_get_main_queue(), ^{
     SetupAndLoadFromSource(assets_directory, main, packages);

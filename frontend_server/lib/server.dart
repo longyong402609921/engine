@@ -5,16 +5,23 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:args/args.dart';
-import 'package:front_end/compilation_message.dart';
 
-import 'package:front_end/incremental_kernel_generator.dart';
-import 'package:front_end/compiler_options.dart';
-import 'package:front_end/kernel_generator.dart';
+// front_end/src imports below that require lint `ignore_for_file`
+// are a temporary state of things until frontend team builds better api
+// that would replace api used below. This api was made private in
+// an effort to discourage further use.
+// ignore_for_file: implementation_imports
+import 'package:front_end/src/api_prototype/byte_store.dart';
+import 'package:front_end/src/api_prototype/compiler_options.dart';
+import 'package:front_end/src/api_prototype/incremental_kernel_generator.dart';
+
 import 'package:kernel/ast.dart';
-import 'package:kernel/kernel.dart' as kernel;
+import 'package:kernel/binary/ast_to_binary.dart';
+import 'package:kernel/binary/limited_ast_to_binary.dart';
 import 'package:kernel/target/flutter.dart';
 import 'package:kernel/target/targets.dart';
 import 'package:usage/uuid/uuid.dart';
+import 'package:vm/kernel_front_end.dart' show compileToKernel;
 
 ArgParser _argParser = new ArgParser(allowTrailingOptions: true)
   ..addFlag('train',
@@ -24,14 +31,28 @@ ArgParser _argParser = new ArgParser(allowTrailingOptions: true)
       help: 'Run compiler in incremental mode', defaultsTo: false)
   ..addOption('sdk-root',
       help: 'Path to sdk root',
-      defaultsTo: '../../out/android_debug/flutter_patched_sdk');
+      defaultsTo: '../../out/android_debug/flutter_patched_sdk')
+  ..addOption('byte-store',
+      help: 'Path to file byte store used to keep incremental compiler state.'
+          ' If omitted, then memory byte store is used.',
+      defaultsTo: null)
+  ..addFlag('aot',
+      help: 'Run compiler in AOT mode (enables whole-program transformations)',
+      defaultsTo: false)
+  ..addFlag('link-platform',
+      help:
+          'When in batch mode, link platform kernel file into result kernel file.'
+          ' Intended use is to satisfy different loading strategies implemented'
+          ' by gen_snapshot(which needs platform embedded) vs'
+          ' Flutter engine(which does not)',
+      defaultsTo: true);
 
 String _usage = '''
 Usage: server [options] [input.dart]
 
-If input dart source code is provided on the command line, then the server 
+If input dart source code is provided on the command line, then the server
 compiles it, generates dill file and exits.
-If no input dart source is provided on the command line, server waits for 
+If no input dart source is provided on the command line, server waits for
 instructions from stdin.
 
 Instructions:
@@ -62,7 +83,9 @@ abstract class CompilerInterface {
   /// `options`. When `generator` parameter is omitted, new instance of
   /// `IncrementalKernelGenerator` is created by this method. Main use for this
   /// parameter is for mocking in tests.
-  Future<Null> compile(String filename, ArgResults options, {
+  Future<Null> compile(
+    String filename,
+    ArgResults options, {
     IncrementalKernelGenerator generator,
   });
 
@@ -80,65 +103,83 @@ abstract class CompilerInterface {
 
   /// This let's compiler know that source file identifed by `uri` was changed.
   void invalidate(Uri uri);
+
+  /// Resets incremental compiler accept/reject status so that next time
+  /// recompile is requested, complete kernel file is produced.
+  void resetIncrementalCompiler();
 }
 
-/// Class that for test mocking purposes encapsulates interaction with
-/// global kernel methods.
-class KernelSerializer {
-  /// Writes given kernel `program` to `path`.
-  Future<dynamic> writeProgramToBinary(Program program, String path) {
-    return kernel.writeProgramToBinary(program, path);
+/// Class that for test mocking purposes encapsulates creation of [BinaryPrinter].
+class BinaryPrinterFactory {
+  /// Creates new [BinaryPrinter] to write to [targetSink].
+  BinaryPrinter newBinaryPrinter(IOSink targetSink) {
+    return new LimitedBinaryPrinter(targetSink, (_) => true /* predicate */,
+        false /* excludeUriToSource */);
   }
 }
 
 class _FrontendCompiler implements CompilerInterface {
-  _FrontendCompiler(this._outputStream, { this.kernelSerializer }) {
+  _FrontendCompiler(this._outputStream, {this.printerFactory}) {
     _outputStream ??= stdout;
-    kernelSerializer ??= new KernelSerializer();
+    printerFactory ??= new BinaryPrinterFactory();
   }
 
   StringSink _outputStream;
-  KernelSerializer kernelSerializer;
+  BinaryPrinterFactory printerFactory;
 
   IncrementalKernelGenerator _generator;
   String _filename;
+  String _kernelBinaryFilename;
 
   @override
-  Future<Null> compile(String filename, ArgResults options, {
+  Future<Null> compile(
+    String filename,
+    ArgResults options, {
     IncrementalKernelGenerator generator,
   }) async {
     _filename = filename;
+    _kernelBinaryFilename = "$filename.dill";
     final String boundaryKey = new Uuid().generateV4();
     _outputStream.writeln("result $boundaryKey");
     final Uri sdkRoot = _ensureFolderPath(options['sdk-root']);
+    final String byteStorePath = options['byte-store'];
     final CompilerOptions compilerOptions = new CompilerOptions()
+      ..byteStore = byteStorePath != null
+          ? new FileByteStore(byteStorePath)
+          : new MemoryByteStore()
       ..sdkRoot = sdkRoot
       ..strongMode = false
       ..target = new FlutterTarget(new TargetFlags())
-      ..onError = (CompilationMessage message) {
-        _outputStream.writeln("$message");
-      };
+      ..reportMessages = true;
+
     Program program;
     if (options['incremental']) {
       _generator = generator != null
-        ? generator
-        : await IncrementalKernelGenerator.newInstance(
-            compilerOptions, Uri.base.resolve(_filename)
-        );
-      final DeltaProgram deltaProgram = await _generator.computeDelta();
+          ? generator
+          : await IncrementalKernelGenerator.newInstance(
+              compilerOptions, Uri.base.resolve(_filename),
+              useMinimalGenerator: true);
+      final DeltaProgram deltaProgram =
+          await _runWithPrintRedirection(() => _generator.computeDelta());
       program = deltaProgram.newProgram;
     } else {
-      // TODO(aam): Remove linkedDependencies once platform is directly embedded
-      // into VM snapshot and http://dartbug.com/30111 is fixed.
-      compilerOptions.linkedDependencies = <Uri>[
-        sdkRoot.resolve('platform.dill')
-      ];
-      program = await kernelForProgram(Uri.base.resolve(_filename), compilerOptions);
+      if (options['link-platform']) {
+        // TODO(aam): Remove linkedDependencies once platform is directly embedded
+        // into VM snapshot and http://dartbug.com/30111 is fixed.
+        compilerOptions.linkedDependencies = <Uri>[
+          sdkRoot.resolve('platform.dill')
+        ];
+      }
+      program = await _runWithPrintRedirection(() => compileToKernel(
+          Uri.base.resolve(_filename), compilerOptions,
+          aot: options['aot']));
     }
     if (program != null) {
-      final String kernelBinaryFilename = _filename + ".dill";
-      await kernelSerializer.writeProgramToBinary(program, kernelBinaryFilename);
-      _outputStream.writeln("$boundaryKey $kernelBinaryFilename");
+      final IOSink sink = new File(_kernelBinaryFilename).openWrite();
+      final BinaryPrinter printer = printerFactory.newBinaryPrinter(sink);
+      printer.writeProgramFile(program);
+      await sink.close();
+      _outputStream.writeln("$boundaryKey $_kernelBinaryFilename");
     } else
       _outputStream.writeln(boundaryKey);
     return null;
@@ -149,10 +190,11 @@ class _FrontendCompiler implements CompilerInterface {
     final String boundaryKey = new Uuid().generateV4();
     _outputStream.writeln("result $boundaryKey");
     final DeltaProgram deltaProgram = await _generator.computeDelta();
-    final Program program = deltaProgram.newProgram;
-    final String kernelBinaryFilename = _filename + ".dill";
-    await kernelSerializer.writeProgramToBinary(program, kernelBinaryFilename);
-    _outputStream.writeln("$boundaryKey");
+    final IOSink sink = new File(_kernelBinaryFilename).openWrite();
+    final BinaryPrinter printer = printerFactory.newBinaryPrinter(sink);
+    printer.writeProgramFile(deltaProgram.newProgram);
+    await sink.close();
+    _outputStream.writeln("$boundaryKey $_kernelBinaryFilename");
     return null;
   }
 
@@ -171,12 +213,27 @@ class _FrontendCompiler implements CompilerInterface {
     _generator.invalidate(uri);
   }
 
+  @override
+  void resetIncrementalCompiler() {
+    _generator.reset();
+  }
+
   Uri _ensureFolderPath(String path) {
     // This is a URI, not a file path, so the forward slash is correct even
     // on Windows.
-    if (!path.endsWith('/'))
+    if (!path.endsWith('/')) {
       path = '$path/';
+    }
     return Uri.base.resolve(path);
+  }
+
+  /// Runs the given function [f] in a Zone that redirects all prints into
+  /// [_outputStream].
+  Future<T> _runWithPrintRedirection<T>(Future<T> f()) {
+    return runZoned(() => new Future<T>(f),
+        zoneSpecification: new ZoneSpecification(
+            print: (Zone self, ZoneDelegate parent, Zone zone, String line) =>
+                _outputStream.writeln(line)));
   }
 }
 
@@ -184,18 +241,37 @@ class _FrontendCompiler implements CompilerInterface {
 /// processes user input.
 /// `compiler` is an optional parameter so it can be replaced with mocked
 /// version for testing.
-Future<int> starter(List<String> args, {
+Future<int> starter(
+  List<String> args, {
   CompilerInterface compiler,
-  Stream<List<int>> input, StringSink output,
+  Stream<List<int>> input,
+  StringSink output,
   IncrementalKernelGenerator generator,
-  KernelSerializer kernelSerializer
+  BinaryPrinterFactory binaryPrinterFactory,
 }) async {
-  final ArgResults options = _argParser.parse(args);
-  if (options['train'])
-    return 0;
+  ArgResults options;
+  try {
+    options = _argParser.parse(args);
+  } catch (error) {
+    print('ERROR: $error\n');
+    print(_usage);
+    return 1;
+  }
 
-  compiler ??= new _FrontendCompiler(output, kernelSerializer: kernelSerializer);
+  if (options['train']) {
+    return 0;
+  }
+
+  compiler ??=
+      new _FrontendCompiler(output, printerFactory: binaryPrinterFactory);
   input ??= stdin;
+
+  // Has to be a directory, that won't have any of the compiled application
+  // sources, so that no relative paths could show up in the kernel file.
+  Directory.current = Directory.systemTemp;
+  final Directory workingDirectory = new Directory("flutter_frontend_server");
+  workingDirectory.createSync();
+  Directory.current = workingDirectory;
 
   if (options.rest.isNotEmpty) {
     await compiler.compile(options.rest[0], options, generator: generator);
@@ -213,17 +289,21 @@ Future<int> starter(List<String> args, {
         const String COMPILE_INSTRUCTION_SPACE = 'compile ';
         const String RECOMPILE_INSTRUCTION_SPACE = 'recompile ';
         if (string.startsWith(COMPILE_INSTRUCTION_SPACE)) {
-          final String filename = string.substring(COMPILE_INSTRUCTION_SPACE.length);
+          final String filename =
+              string.substring(COMPILE_INSTRUCTION_SPACE.length);
           await compiler.compile(filename, options, generator: generator);
         } else if (string.startsWith(RECOMPILE_INSTRUCTION_SPACE)) {
           boundaryKey = string.substring(RECOMPILE_INSTRUCTION_SPACE.length);
           state = _State.RECOMPILE_LIST;
-        } else if (string == 'accept')
+        } else if (string == 'accept') {
           compiler.acceptLastDelta();
-        else if (string == 'reject')
+        } else if (string == 'reject') {
           compiler.rejectLastDelta();
-        else if (string == 'quit')
+        } else if (string == 'reset') {
+          compiler.resetIncrementalCompiler();
+        } else if (string == 'quit') {
           exit(0);
+        }
         break;
       case _State.RECOMPILE_LIST:
         if (string == boundaryKey) {

@@ -5,23 +5,23 @@
 #ifndef FLUTTER_CONTENT_HANDLER_VULKAN_SURFACE_PRODUCER_H_
 #define FLUTTER_CONTENT_HANDLER_VULKAN_SURFACE_PRODUCER_H_
 
-#include "apps/mozart/lib/scene/client/resources.h"
-#include "apps/mozart/lib/scene/client/session.h"
 #include "flutter/content_handler/vulkan_surface.h"
 #include "flutter/content_handler/vulkan_surface_pool.h"
 #include "flutter/flow/scene_update_context.h"
 #include "flutter/vulkan/vulkan_application.h"
 #include "flutter/vulkan/vulkan_device.h"
 #include "flutter/vulkan/vulkan_proc_table.h"
-#include "lib/ftl/macros.h"
-#include "lib/mtl/tasks/message_loop.h"
+#include "lib/fsl/tasks/message_loop.h"
+#include "lib/fxl/macros.h"
+#include "lib/ui/scenic/client/resources.h"
+#include "lib/ui/scenic/client/session.h"
 #include "third_party/skia/include/gpu/vk/GrVkBackendContext.h"
 
 namespace flutter_runner {
 
 class VulkanSurfaceProducer : public flow::SceneUpdateContext::SurfaceProducer {
  public:
-  VulkanSurfaceProducer(mozart::client::Session* mozart_session);
+  VulkanSurfaceProducer(scenic_lib::Session* mozart_session);
 
   ~VulkanSurfaceProducer();
 
@@ -48,7 +48,7 @@ class VulkanSurfaceProducer : public flow::SceneUpdateContext::SurfaceProducer {
   // VkInstance, so it must be destroyed after the logical device and the
   // application, which own other vulkan objects associated with the device
   // and instance.
-  ftl::RefPtr<vulkan::VulkanProcTable> vk_;
+  fxl::RefPtr<vulkan::VulkanProcTable> vk_;
   sk_sp<GrVkBackendContext> backend_context_;
   std::unique_ptr<vulkan::VulkanDevice> logical_device_;
   std::unique_ptr<vulkan::VulkanApplication> application_;
@@ -56,9 +56,9 @@ class VulkanSurfaceProducer : public flow::SceneUpdateContext::SurfaceProducer {
   std::unique_ptr<VulkanSurfacePool> surface_pool_;
   bool valid_ = false;
 
-  bool Initialize(mozart::client::Session* mozart_session);
+  bool Initialize(scenic_lib::Session* mozart_session);
 
-  FTL_DISALLOW_COPY_AND_ASSIGN(VulkanSurfaceProducer);
+  FXL_DISALLOW_COPY_AND_ASSIGN(VulkanSurfaceProducer);
 };
 
 }  // namespace flutter_runner

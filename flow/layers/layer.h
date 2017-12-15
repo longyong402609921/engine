@@ -10,10 +10,11 @@
 
 #include "flutter/flow/instrumentation.h"
 #include "flutter/flow/raster_cache.h"
+#include "flutter/flow/texture.h"
 #include "flutter/glue/trace_event.h"
-#include "lib/ftl/build_config.h"
-#include "lib/ftl/logging.h"
-#include "lib/ftl/macros.h"
+#include "lib/fxl/build_config.h"
+#include "lib/fxl/logging.h"
+#include "lib/fxl/macros.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkColorFilter.h"
@@ -25,9 +26,9 @@
 
 #if defined(OS_FUCHSIA)
 
-#include "apps/mozart/lib/scene/client/resources.h"  //nogncheck
-#include "apps/mozart/lib/scene/client/session.h"    //nogncheck
-#include "flutter/flow/scene_update_context.h"       //nogncheck
+#include "flutter/flow/scene_update_context.h"  //nogncheck
+#include "lib/ui/scenic/client/resources.h"     //nogncheck
+#include "lib/ui/scenic/client/session.h"       //nogncheck
 
 #endif  // defined(OS_FUCHSIA)
 
@@ -35,12 +36,17 @@ namespace flow {
 
 class ContainerLayer;
 
+// Represents a single composited layer. Created on the UI thread but then
+// subquently used on the Rasterizer thread.
 class Layer {
  public:
   Layer();
   virtual ~Layer();
 
   struct PrerollContext {
+#if defined(OS_FUCHSIA)
+    scenic::Metrics* metrics = nullptr;
+#endif
     RasterCache* raster_cache;
     GrContext* gr_context;
     SkColorSpace* dst_color_space;
@@ -54,6 +60,7 @@ class Layer {
     const Stopwatch& frame_time;
     const Stopwatch& engine_time;
     const CounterValues& memory_usage;
+    TextureRegistry& texture_registry;
     const bool checkerboard_offscreen_layers;
   };
 
@@ -75,7 +82,7 @@ class Layer {
     const SkRect bounds_;
   };
 
-  virtual void Paint(PaintContext& context) = 0;
+  virtual void Paint(PaintContext& context) const = 0;
 
 #if defined(OS_FUCHSIA)
   // Updates the system composited scene.
@@ -106,7 +113,7 @@ class Layer {
   bool needs_system_composite_;
   SkRect paint_bounds_;
 
-  FTL_DISALLOW_COPY_AND_ASSIGN(Layer);
+  FXL_DISALLOW_COPY_AND_ASSIGN(Layer);
 };
 
 }  // namespace flow

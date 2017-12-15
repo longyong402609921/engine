@@ -6,11 +6,11 @@
 
 #include <dlfcn.h>
 
-#include "lib/ftl/logging.h"
+#include "lib/fxl/logging.h"
 
 #define ACQUIRE_PROC(name, context)                          \
   if (!(name = AcquireProc("vk" #name, context))) {          \
-    FTL_DLOG(INFO) << "Could not acquire proc: vk" << #name; \
+    FXL_DLOG(INFO) << "Could not acquire proc: vk" << #name; \
     return false;                                            \
   }
 
@@ -56,7 +56,7 @@ bool VulkanProcTable::SetupLoaderProcAddresses() {
 #endif  // VULKAN_LINK_STATICALLY
 
   if (!GetInstanceProcAddr) {
-    FTL_DLOG(WARNING) << "Could not acquire vkGetInstanceProcAddr.";
+    FXL_DLOG(WARNING) << "Could not acquire vkGetInstanceProcAddr.";
     return false;
   }
 
@@ -92,7 +92,6 @@ bool VulkanProcTable::SetupInstanceProcAddresses(
 #if OS_FUCHSIA
   [this, &handle]() -> bool {
     ACQUIRE_PROC(CreateMagmaSurfaceKHR, handle);
-    ACQUIRE_PROC(ExportDeviceMemoryMAGMA, handle);
     ACQUIRE_PROC(GetPhysicalDeviceMagmaPresentationSupportKHR, handle);
     return true;
   }();
@@ -145,7 +144,8 @@ bool VulkanProcTable::SetupDeviceProcAddresses(
   ACQUIRE_PROC(ResetFences, handle);
   ACQUIRE_PROC(WaitForFences, handle);
 #if OS_FUCHSIA
-  ACQUIRE_PROC(ExportDeviceMemoryMAGMA, handle);
+  ACQUIRE_PROC(GetMemoryFuchsiaHandleKHR, handle);
+  ACQUIRE_PROC(ImportSemaphoreFuchsiaHandleKHR, handle);
 #endif  // OS_FUCHSIA
   device_ = {handle, nullptr};
   return true;
@@ -160,7 +160,7 @@ bool VulkanProcTable::OpenLibraryHandle() {
   dlerror();  // clear existing errors on thread.
   handle_ = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
   if (handle_ == nullptr) {
-    FTL_DLOG(WARNING) << "Could not open the vulkan library: " << dlerror();
+    FXL_DLOG(WARNING) << "Could not open the vulkan library: " << dlerror();
     return false;
   }
   return true;
@@ -175,9 +175,9 @@ bool VulkanProcTable::CloseLibraryHandle() {
   if (handle_ != nullptr) {
     dlerror();  // clear existing errors on thread.
     if (dlclose(handle_) != 0) {
-      FTL_DLOG(ERROR) << "Could not close the vulkan library handle. This "
+      FXL_DLOG(ERROR) << "Could not close the vulkan library handle. This "
                          "indicates a leak.";
-      FTL_DLOG(ERROR) << dlerror();
+      FXL_DLOG(ERROR) << dlerror();
     }
     handle_ = nullptr;
   }

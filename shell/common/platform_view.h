@@ -7,14 +7,15 @@
 
 #include <memory>
 
+#include "flutter/flow/texture.h"
 #include "flutter/lib/ui/semantics/semantics_node.h"
 #include "flutter/shell/common/engine.h"
 #include "flutter/shell/common/shell.h"
 #include "flutter/shell/common/surface.h"
 #include "flutter/shell/common/vsync_waiter.h"
-#include "lib/ftl/macros.h"
-#include "lib/ftl/memory/weak_ptr.h"
-#include "lib/ftl/synchronization/waitable_event.h"
+#include "lib/fxl/macros.h"
+#include "lib/fxl/memory/weak_ptr.h"
+#include "lib/fxl/synchronization/waitable_event.h"
 #include "third_party/skia/include/core/SkSize.h"
 #include "third_party/skia/include/gpu/GrContext.h"
 
@@ -39,14 +40,16 @@ class PlatformView : public std::enable_shared_from_this<PlatformView> {
 
   virtual void Attach() = 0;
 
-  void DispatchPlatformMessage(ftl::RefPtr<blink::PlatformMessage> message);
-  void DispatchSemanticsAction(int32_t id, blink::SemanticsAction action);
+  void DispatchPlatformMessage(fxl::RefPtr<blink::PlatformMessage> message);
+  void DispatchSemanticsAction(int32_t id,
+                               blink::SemanticsAction action,
+                               std::vector<uint8_t> args);
   void SetSemanticsEnabled(bool enabled);
 
   void NotifyCreated(std::unique_ptr<Surface> surface);
 
   void NotifyCreated(std::unique_ptr<Surface> surface,
-                     ftl::Closure continuation);
+                     fxl::Closure continuation);
 
   void NotifyDestroyed();
 
@@ -59,7 +62,18 @@ class PlatformView : public std::enable_shared_from_this<PlatformView> {
 
   virtual void UpdateSemantics(std::vector<blink::SemanticsNode> update);
   virtual void HandlePlatformMessage(
-      ftl::RefPtr<blink::PlatformMessage> message);
+      fxl::RefPtr<blink::PlatformMessage> message);
+
+  // Called once per texture, on the platform thread.
+  void RegisterTexture(std::shared_ptr<flow::Texture> texture);
+
+  // Called once per texture, on the platform thread.
+  void UnregisterTexture(int64_t texture_id);
+
+  // Called once per texture update (e.g. video frame), on the platform thread.
+  virtual void MarkTextureFrameAvailable(int64_t texture_id);
+
+  void SetRasterizer(std::unique_ptr<Rasterizer> rasterizer);
 
   Rasterizer& rasterizer() { return *rasterizer_; }
   Engine& engine() { return *engine_; }
@@ -72,20 +86,19 @@ class PlatformView : public std::enable_shared_from_this<PlatformView> {
   explicit PlatformView(std::unique_ptr<Rasterizer> rasterizer);
 
   void CreateEngine();
-  void PostAddToShellTask();
 
   void SetupResourceContextOnIOThreadPerform(
-      ftl::AutoResetWaitableEvent* event);
+      fxl::AutoResetWaitableEvent* event);
 
   SurfaceConfig surface_config_;
   std::unique_ptr<Rasterizer> rasterizer_;
+  flow::TextureRegistry texture_registry_;
   std::unique_ptr<Engine> engine_;
   std::unique_ptr<VsyncWaiter> vsync_waiter_;
   SkISize size_;
 
-private:
-
-  FTL_DISALLOW_COPY_AND_ASSIGN(PlatformView);
+ private:
+  FXL_DISALLOW_COPY_AND_ASSIGN(PlatformView);
 };
 
 }  // namespace shell

@@ -2,20 +2,21 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//dart/sdk/lib/async/async_sources.gni")
-import("//dart/sdk/lib/collection/collection_sources.gni")
-import("//dart/sdk/lib/convert/convert_sources.gni")
-import("//dart/sdk/lib/core/core_sources.gni")
-import("//dart/sdk/lib/developer/developer_sources.gni")
-import("//dart/sdk/lib/internal/internal_sources.gni")
-import("//dart/sdk/lib/io/io_sources.gni")
-import("//dart/sdk/lib/isolate/isolate_sources.gni")
-import("//dart/sdk/lib/math/math_sources.gni")
-import("//dart/sdk/lib/typed_data/typed_data_sources.gni")
+import("//third_party/dart/sdk/lib/async/async_sources.gni")
+import("//third_party/dart/sdk/lib/collection/collection_sources.gni")
+import("//third_party/dart/sdk/lib/convert/convert_sources.gni")
+import("//third_party/dart/sdk/lib/core/core_sources.gni")
+import("//third_party/dart/sdk/lib/developer/developer_sources.gni")
+import("//third_party/dart/sdk/lib/_http/http_sources.gni")
+import("//third_party/dart/sdk/lib/internal/internal_sources.gni")
+import("//third_party/dart/sdk/lib/io/io_sources.gni")
+import("//third_party/dart/sdk/lib/isolate/isolate_sources.gni")
+import("//third_party/dart/sdk/lib/math/math_sources.gni")
+import("//third_party/dart/sdk/lib/typed_data/typed_data_sources.gni")
 
-import("//flutter/build/dart/rules.gni")
-import("//flutter/lib/ui/dart_ui.gni")
-import("//flutter/sky/engine/core/core.gni")
+import("$flutter_root/build/dart/rules.gni")
+import("$flutter_root/lib/ui/dart_ui.gni")
+import("$flutter_root/sky/engine/core/core.gni")
 
 if (!is_fuchsia) {
   copy("copy_sky_engine_authors") {
@@ -30,7 +31,7 @@ if (!is_fuchsia) {
 }
 
 
-dart_sdk_lib_path = rebase_path("//dart/sdk/lib")
+dart_sdk_lib_path = rebase_path("//third_party/dart/sdk/lib")
 
 copy("async") {
   lib_path = rebase_path("async", "", dart_sdk_lib_path)
@@ -62,6 +63,12 @@ copy("developer") {
   lib_path = rebase_path("developer", "", dart_sdk_lib_path)
   sources = rebase_path(developer_sdk_sources, "", lib_path)
   outputs = [ "$root_gen_dir/dart-pkg/sky_engine/lib/developer/{{source_file_part}}" ]
+}
+
+copy("_http") {
+  lib_path = rebase_path("_http", "", dart_sdk_lib_path)
+  sources = rebase_path(http_sdk_sources, "", lib_path)
+  outputs = [ "$root_gen_dir/dart-pkg/sky_engine/lib/_http/{{source_file_part}}" ]
 }
 
 copy("internal") {
@@ -109,6 +116,7 @@ group("copy_dart_sdk") {
     ":convert",
     ":core",
     ":developer",
+    ":_http",
     ":internal",
     ":io",
     ":isolate",
@@ -135,7 +143,7 @@ dart_pkg("sky_engine") {
     deps += [ ":copy_sky_engine_authors" ]
   }
 
-  service_isolate_dir = "//dart/runtime/bin/vmservice"
+  service_isolate_dir = "//third_party/dart/runtime/bin/vmservice"
   sdk_ext_directory = "$root_gen_dir/sky/bindings"
   sdk_ext_files = [
     "$service_isolate_dir/vmservice_io.dart",

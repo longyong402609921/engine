@@ -11,8 +11,11 @@
 
 #include "flutter/flow/compositor_context.h"
 #include "flutter/flow/layers/layer.h"
-#include "lib/ftl/macros.h"
-#include "lib/ftl/time/time_delta.h"
+#include "lib/fxl/macros.h"
+#include "lib/fxl/time/time_delta.h"
+#if defined(OS_FUCHSIA)
+#include "lib/ui/scenic/fidl/events.fidl.h"
+#endif
 #include "third_party/skia/include/core/SkSize.h"
 
 namespace flow {
@@ -25,9 +28,15 @@ class LayerTree {
 
   // Raster includes both Preroll and Paint.
   void Raster(CompositorContext::ScopedFrame& frame,
+#if defined(OS_FUCHSIA)
+              scenic::Metrics* metrics,
+#endif
               bool ignore_raster_cache = false);
 
   void Preroll(CompositorContext::ScopedFrame& frame,
+#if defined(OS_FUCHSIA)
+               scenic::Metrics* metrics,
+#endif
                bool ignore_raster_cache = false);
 
 #if defined(OS_FUCHSIA)
@@ -36,10 +45,10 @@ class LayerTree {
   }
 
   void UpdateScene(SceneUpdateContext& context,
-                   mozart::client::ContainerNode& container);
+                   scenic_lib::ContainerNode& container);
 #endif
 
-  void Paint(CompositorContext::ScopedFrame& frame);
+  void Paint(CompositorContext::ScopedFrame& frame) const;
 
   Layer* root_layer() const { return root_layer_.get(); }
 
@@ -51,11 +60,11 @@ class LayerTree {
 
   void set_frame_size(const SkISize& frame_size) { frame_size_ = frame_size; }
 
-  void set_construction_time(const ftl::TimeDelta& delta) {
+  void set_construction_time(const fxl::TimeDelta& delta) {
     construction_time_ = delta;
   }
 
-  const ftl::TimeDelta& construction_time() const { return construction_time_; }
+  const fxl::TimeDelta& construction_time() const { return construction_time_; }
 
   // The number of frame intervals missed after which the compositor must
   // trace the rasterized picture to a trace file. Specify 0 to disable all
@@ -79,7 +88,7 @@ class LayerTree {
  private:
   SkISize frame_size_;  // Physical pixels.
   std::unique_ptr<Layer> root_layer_;
-  ftl::TimeDelta construction_time_;
+  fxl::TimeDelta construction_time_;
   uint32_t rasterizer_tracing_threshold_;
   bool checkerboard_raster_cache_images_;
   bool checkerboard_offscreen_layers_;
@@ -88,7 +97,7 @@ class LayerTree {
   float device_pixel_ratio_ = 1.f;
 #endif
 
-  FTL_DISALLOW_COPY_AND_ASSIGN(LayerTree);
+  FXL_DISALLOW_COPY_AND_ASSIGN(LayerTree);
 };
 
 }  // namespace flow

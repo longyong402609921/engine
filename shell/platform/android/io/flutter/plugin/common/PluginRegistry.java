@@ -5,8 +5,11 @@
 package io.flutter.plugin.common;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
+import io.flutter.view.FlutterNativeView;
 import io.flutter.view.FlutterView;
+import io.flutter.view.TextureRegistry;
 
 /**
  * Registry used by plugins to set up interaction with Android APIs.
@@ -65,14 +68,29 @@ public interface PluginRegistry {
          * {@link io.flutter.app.FlutterActivity} or
          * {@link io.flutter.app.FlutterFragmentActivity}), as applications
          * are free to use any activity subclass.</p>
+         *
+         * <p>When there is no foreground activity in the application, this
+         * will return null. If a {@link Context} is needed, use context() to
+         * get the application's context.</p>
          */
         Activity activity();
+
+        /**
+         * Returns the {@link Application}'s {@link Context}.
+         */
+        Context context();
 
         /**
          * Returns a {@link BinaryMessenger} which the plugin can use for
          * creating channels for communicating with the Dart side.
          */
         BinaryMessenger messenger();
+
+        /**
+         * Returns a {@link TextureRegistry} which the plugin can use for
+         * managing backend textures.
+         */
+        TextureRegistry textures();
 
         /**
          * Returns the {@link FlutterView} that's instantiated by this plugin's
@@ -133,6 +151,15 @@ public interface PluginRegistry {
          * @return this {@link Registrar}.
          */
         Registrar addUserLeaveHintListener(UserLeaveHintListener listener);
+
+        /**
+         * Adds a callback allowing the plugin to take part in handling incoming
+         * calls to {@link Activity#onDestroy()}.
+         *
+         * @param listener a {@link ViewDestroyListener} callback.
+         * @return this {@link Registrar}.
+         */
+        Registrar addViewDestroyListener(ViewDestroyListener listener);
     }
 
     /**
@@ -174,5 +201,25 @@ public interface PluginRegistry {
      */
     interface UserLeaveHintListener {
         void onUserLeaveHint();
+    }
+
+    /**
+     * Delegate interface for handling an {@link Activity}'s onDestroy
+     * method being called. A plugin that implements this interface can
+     * adopt the FlutterNativeView by retaining a reference and returning true.
+     */
+    interface ViewDestroyListener {
+        boolean onViewDestroy(FlutterNativeView view);
+    }
+
+    /**
+     * Callback interface for registering plugins with a plugin registry.
+     *
+     * <p>For example, an Application may use this callback interface to
+     * provide a background service with a callback for calling its
+     * GeneratedPluginRegistrant.registerWith method.</p>
+     */
+    interface PluginRegistrantCallback {
+        void registerWith(PluginRegistry registry);
     }
 }

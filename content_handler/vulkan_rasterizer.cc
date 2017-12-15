@@ -5,9 +5,9 @@
 #include "flutter/content_handler/vulkan_rasterizer.h"
 
 #include <fcntl.h>
-#include <magenta/device/vfs.h>
-#include <mxio/watcher.h>
+#include <fdio/watcher.h>
 #include <unistd.h>
+#include <zircon/device/vfs.h>
 
 #include <chrono>
 #include <thread>
@@ -15,32 +15,32 @@
 
 #include "flutter/common/threads.h"
 #include "flutter/glue/trace_event.h"
-#include "lib/ftl/files/unique_fd.h"
+#include "lib/fxl/files/unique_fd.h"
 
 namespace flutter_runner {
 
 constexpr char kDisplayDriverClass[] = "/dev/class/display";
 
-static mx_status_t DriverWatcher(int dirfd,
+static zx_status_t DriverWatcher(int dirfd,
                                  int event,
                                  const char* fn,
                                  void* cookie) {
   if (event == WATCH_EVENT_ADD_FILE && !strcmp(fn, "000")) {
-    return MX_ERR_STOP;
+    return ZX_ERR_STOP;
   }
-  return MX_OK;
+  return ZX_OK;
 }
 
 bool WaitForFirstDisplayDriver() {
-  ftl::UniqueFD fd(open(kDisplayDriverClass, O_DIRECTORY | O_RDONLY));
+  fxl::UniqueFD fd(open(kDisplayDriverClass, O_DIRECTORY | O_RDONLY));
   if (fd.get() < 0) {
-    FTL_DLOG(ERROR) << "Failed to open " << kDisplayDriverClass;
+    FXL_DLOG(ERROR) << "Failed to open " << kDisplayDriverClass;
     return false;
   }
 
-  mx_status_t status = mxio_watch_directory(
-      fd.get(), DriverWatcher, mx_deadline_after(MX_SEC(1)), nullptr);
-  return status == MX_ERR_STOP;
+  zx_status_t status = fdio_watch_directory(
+      fd.get(), DriverWatcher, zx_deadline_after(ZX_SEC(1)), nullptr);
+  return status == ZX_ERR_STOP;
 }
 
 VulkanRasterizer::VulkanRasterizer() : compositor_context_(nullptr) {
@@ -54,31 +54,31 @@ bool VulkanRasterizer::IsValid() const {
 }
 
 void VulkanRasterizer::SetScene(
-    fidl::InterfaceHandle<mozart2::SceneManager> scene_manager,
-    mx::eventpair import_token,
-    ftl::Closure metrics_changed_callback) {
+    fidl::InterfaceHandle<scenic::SceneManager> scene_manager,
+    zx::eventpair import_token,
+    fxl::Closure metrics_changed_callback) {
   ASSERT_IS_GPU_THREAD;
-  FTL_DCHECK(valid_ && !session_connection_);
+  FXL_DCHECK(valid_ && !session_connection_);
   session_connection_ = std::make_unique<SessionConnection>(
-      mozart2::SceneManagerPtr::Create(std::move(scene_manager)),
+      scenic::SceneManagerPtr::Create(std::move(scene_manager)),
       std::move(import_token));
   session_connection_->set_metrics_changed_callback(
       std::move(metrics_changed_callback));
 }
 
 void VulkanRasterizer::Draw(std::unique_ptr<flow::LayerTree> layer_tree,
-                            ftl::Closure callback) {
+                            fxl::Closure callback) {
   ASSERT_IS_GPU_THREAD;
-  FTL_DCHECK(callback != nullptr);
+  FXL_DCHECK(callback != nullptr);
 
   if (layer_tree == nullptr) {
-    FTL_LOG(ERROR) << "Layer tree was not valid.";
+    FXL_LOG(ERROR) << "Layer tree was not valid.";
     callback();
     return;
   }
 
   if (!session_connection_) {
-    FTL_LOG(ERROR) << "Session was not valid.";
+    FXL_LOG(ERROR) << "Session was not valid.";
     callback();
     return;
   }
@@ -97,7 +97,7 @@ void VulkanRasterizer::Draw(std::unique_ptr<flow::LayerTree> layer_tree,
     // Preroll the Flutter layer tree. This allows Flutter to perform pre-paint
     // optimizations.
     TRACE_EVENT0("flutter", "Preroll");
-    layer_tree->Preroll(frame);
+    layer_tree->Preroll(frame, session_connection_->metrics().get());
   }
 
   {

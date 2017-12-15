@@ -18,21 +18,42 @@ LayerTree::LayerTree()
 LayerTree::~LayerTree() = default;
 
 void LayerTree::Raster(CompositorContext::ScopedFrame& frame,
+#if defined(OS_FUCHSIA)
+                       scenic::Metrics* metrics,
+#endif
                        bool ignore_raster_cache) {
-  Preroll(frame, ignore_raster_cache);
+#if defined(OS_FUCHSIA)
+  FXL_DCHECK(metrics);
+#endif
+  Preroll(frame,
+#if defined(OS_FUCHSIA)
+          metrics,
+#endif
+          ignore_raster_cache);
   Paint(frame);
 }
 
 void LayerTree::Preroll(CompositorContext::ScopedFrame& frame,
+#if defined(OS_FUCHSIA)
+                        scenic::Metrics* metrics,
+#endif
                         bool ignore_raster_cache) {
+#if defined(OS_FUCHSIA)
+  FXL_DCHECK(metrics);
+#endif
   TRACE_EVENT0("flutter", "LayerTree::Preroll");
   SkColorSpace* color_space =
       frame.canvas() ? frame.canvas()->imageInfo().colorSpace() : nullptr;
   frame.context().raster_cache().SetCheckboardCacheImages(
       checkerboard_raster_cache_images_);
   Layer::PrerollContext context = {
-      ignore_raster_cache ? nullptr : &frame.context().raster_cache(),
-      frame.gr_context(), color_space, SkRect::MakeEmpty(),
+#if defined(OS_FUCHSIA)
+    metrics,
+#endif
+    ignore_raster_cache ? nullptr : &frame.context().raster_cache(),
+    frame.gr_context(),
+    color_space,
+    SkRect::MakeEmpty(),
   };
 
   root_layer_->Preroll(&context, SkMatrix::I());
@@ -40,7 +61,7 @@ void LayerTree::Preroll(CompositorContext::ScopedFrame& frame,
 
 #if defined(OS_FUCHSIA)
 void LayerTree::UpdateScene(SceneUpdateContext& context,
-                            mozart::client::ContainerNode& container) {
+                            scenic_lib::ContainerNode& container) {
   TRACE_EVENT0("flutter", "LayerTree::UpdateScene");
 
   SceneUpdateContext::Transform transform(context, 1.f / device_pixel_ratio_,
@@ -60,10 +81,12 @@ void LayerTree::UpdateScene(SceneUpdateContext& context,
 }
 #endif
 
-void LayerTree::Paint(CompositorContext::ScopedFrame& frame) {
-  Layer::PaintContext context = {*frame.canvas(), frame.context().frame_time(),
+void LayerTree::Paint(CompositorContext::ScopedFrame& frame) const {
+  Layer::PaintContext context = {*frame.canvas(),
+                                 frame.context().frame_time(),
                                  frame.context().engine_time(),
                                  frame.context().memory_usage(),
+                                 frame.context().texture_registry(),
                                  checkerboard_offscreen_layers_};
   TRACE_EVENT0("flutter", "LayerTree::Paint");
 

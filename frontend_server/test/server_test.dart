@@ -5,7 +5,13 @@ import 'dart:isolate';
 
 import 'package:args/src/arg_results.dart';
 import 'package:frontend_server/server.dart';
-import 'package:front_end/incremental_kernel_generator.dart';
+// front_end/src imports below that require lint `ignore_for_file`
+// are a temporary state of things until frontend team builds better api
+// that would replace api used below. This api was made private in
+// an effort to discourage further use.
+// ignore_for_file: implementation_imports
+import 'package:front_end/src/api_prototype/incremental_kernel_generator.dart';
+import 'package:kernel/binary/ast_to_binary.dart';
 import 'package:mockito/mockito.dart';
 import 'package:test/test.dart';
 
@@ -14,7 +20,9 @@ class _MockedCompiler extends Mock implements CompilerInterface {}
 class _MockedIncrementalKernelGenerator extends Mock
   implements IncrementalKernelGenerator {}
 
-class _MockedKernelSerializer extends Mock implements KernelSerializer {}
+class _MockedBinaryPrinterFactory extends Mock implements BinaryPrinterFactory {}
+
+class _MockedBinaryPrinter extends Mock implements BinaryPrinter {}
 
 Future<int> main() async {
   group('basic', () {
@@ -44,6 +52,84 @@ Future<int> main() async {
         ).captured;
       expect(capturedArgs.single['sdk-root'], equals('sdkroot'));
     });
+
+    test('compile from command line with file byte store', () async {
+      final List<String> args = <String>[
+        'server.dart',
+        '--sdk-root',
+        'sdkroot',
+        '--byte-store',
+        'path/to/bytestore'
+      ];
+      final int exitcode = await starter(args, compiler: compiler);
+      expect(exitcode, equals(0));
+      final List<ArgResults> capturedArgs =
+          verify(
+              compiler.compile(
+                argThat(equals('server.dart')),
+                captureAny,
+                generator: any,
+              )
+          ).captured;
+      expect(capturedArgs.single['sdk-root'], equals('sdkroot'));
+      expect(capturedArgs.single['byte-store'], equals('path/to/bytestore'));
+    });
+
+    test('compile from command line with link platform', () async {
+      final List<String> args = <String>[
+        'server.dart',
+        '--sdk-root',
+        'sdkroot',
+        '--link-platform',
+      ];
+      final int exitcode = await starter(args, compiler: compiler);
+      expect(exitcode, equals(0));
+      final List<ArgResults> capturedArgs =
+          verify(
+              compiler.compile(
+                argThat(equals('server.dart')),
+                captureAny,
+                generator: any,
+              )
+          ).captured;
+      expect(capturedArgs.single['sdk-root'], equals('sdkroot'));
+      expect(capturedArgs.single['link-platform'], equals(true));
+    });
+  });
+
+  group('interactive file store compile with mocked compiler', () {
+    final CompilerInterface compiler = new _MockedCompiler();
+
+    final List<String> args = <String>[
+      '--sdk-root',
+      'sdkroot',
+      '--byte-store',
+      'path/to/bytestore',
+    ];
+
+    test('compile one file', () async {
+      final StreamController<List<int>> inputStreamController =
+      new StreamController<List<int>>();
+      final ReceivePort compileCalled = new ReceivePort();
+      when(compiler.compile(any, any, generator: any)).thenAnswer(
+              (Invocation invocation) {
+            expect(invocation.positionalArguments[0], equals('server.dart'));
+            expect(invocation.positionalArguments[1]['sdk-root'],
+                equals('sdkroot'));
+            expect(invocation.positionalArguments[1]['byte-store'],
+                equals('path/to/bytestore'));
+            compileCalled.sendPort.send(true);
+          }
+      );
+
+      final int exitcode = await starter(args, compiler: compiler,
+        input: inputStreamController.stream,
+      );
+      expect(exitcode, equals(0));
+      inputStreamController.add('compile server.dart\n'.codeUnits);
+      await compileCalled.first;
+      inputStreamController.close();
+    });
   });
 
   group('interactive compile with mocked compiler', () {
@@ -56,7 +142,7 @@ Future<int> main() async {
 
     test('compile one file', () async {
       final StreamController<List<int>> inputStreamController =
-      new StreamController<List<int>>();
+        new StreamController<List<int>>();
       final ReceivePort compileCalled = new ReceivePort();
       when(compiler.compile(any, any, generator: any)).thenAnswer(
         (Invocation invocation) {
@@ -77,7 +163,7 @@ Future<int> main() async {
 
     test('compile few files', () async {
       final StreamController<List<int>> streamController =
-      new StreamController<List<int>>();
+        new StreamController<List<int>>();
       final ReceivePort compileCalled = new ReceivePort();
       int counter = 1;
       when(compiler.compile(any, any, generator: any)).thenAnswer(
@@ -151,7 +237,7 @@ Future<int> main() async {
 
     test('reject', () async {
       final StreamController<List<int>> inputStreamController =
-      new StreamController<List<int>>();
+        new StreamController<List<int>>();
       final ReceivePort rejectCalled = new ReceivePort();
       when(compiler.rejectLastDelta()).thenAnswer((Invocation invocation) {
         rejectCalled.sendPort.send(true);
@@ -165,9 +251,25 @@ Future<int> main() async {
       inputStreamController.close();
     });
 
+    test('reset', () async {
+      final StreamController<List<int>> inputStreamController =
+        new StreamController<List<int>>();
+      final ReceivePort resetCalled = new ReceivePort();
+      when(compiler.resetIncrementalCompiler()).thenAnswer((Invocation invocation) {
+        resetCalled.sendPort.send(true);
+      });
+      final int exitcode = await starter(args, compiler: compiler,
+        input: inputStreamController.stream,
+      );
+      expect(exitcode, equals(0));
+      inputStreamController.add('reset\n'.codeUnits);
+      await resetCalled.first;
+      inputStreamController.close();
+    });
+
     test('compile then recompile', () async {
       final StreamController<List<int>> streamController =
-      new StreamController<List<int>>();
+        new StreamController<List<int>>();
       final ReceivePort recompileCalled = new ReceivePort();
 
       when(compiler.recompileDelta()).thenAnswer((Invocation invocation) {
@@ -219,7 +321,7 @@ Future<int> main() async {
               boundaryKey = s.substring(RESULT_OUTPUT_SPACE.length);
             }
           } else {
-            if (s == boundaryKey) {
+            if (s.startsWith(boundaryKey)) {
               boundaryKey = null;
               receivedResult.sendPort.send(true);
             }
@@ -229,13 +331,17 @@ Future<int> main() async {
       final _MockedIncrementalKernelGenerator generator =
         new _MockedIncrementalKernelGenerator();
       when(generator.computeDelta()).thenReturn(new Future<DeltaProgram>.value(
-        new DeltaProgram(null /* program stub */)
+        new DeltaProgram("", null /* program stub */)
       ));
+      final _MockedBinaryPrinterFactory printerFactory =
+        new _MockedBinaryPrinterFactory();
+      when(printerFactory.newBinaryPrinter(any))
+        .thenReturn(new _MockedBinaryPrinter());
       final int exitcode = await starter(args, compiler: null,
         input: streamController.stream,
         output: ioSink,
         generator: generator,
-        kernelSerializer: new _MockedKernelSerializer()
+        binaryPrinterFactory: printerFactory,
       );
       expect(exitcode, equals(0));
 

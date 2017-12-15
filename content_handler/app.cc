@@ -7,14 +7,14 @@
 #include <thread>
 #include <utility>
 
-#include "apps/icu_data/lib/icu_data.h"
-#include "apps/tracing/lib/trace/provider.h"
 #include "flutter/common/settings.h"
 #include "flutter/common/threads.h"
 #include "flutter/sky/engine/platform/fonts/fuchsia/FontCacheFuchsia.h"
-#include "lib/ftl/macros.h"
-#include "lib/ftl/tasks/task_runner.h"
-#include "lib/mtl/tasks/message_loop.h"
+#include "lib/fsl/tasks/message_loop.h"
+#include "lib/fxl/macros.h"
+#include "lib/fxl/tasks/task_runner.h"
+#include "lib/icu_data/cpp/icu_data.h"
+#include "third_party/dart/runtime/include/dart_tools_api.h"
 
 namespace flutter_runner {
 namespace {
@@ -22,7 +22,7 @@ namespace {
 static App* g_app = nullptr;
 
 void QuitMessageLoop() {
-  mtl::MessageLoop::GetCurrent()->QuitNow();
+  fsl::MessageLoop::GetCurrent()->QuitNow();
 }
 
 std::string GetLabelFromURL(const std::string& url) {
@@ -38,18 +38,16 @@ App::App() {
   g_app = this;
   context_ = app::ApplicationContext::CreateFromStartupInfo();
 
-  tracing::InitializeTracer(context_.get(), {});
-
-  gpu_thread_ = std::make_unique<mtl::Thread>();
-  io_thread_ = std::make_unique<mtl::Thread>();
+  gpu_thread_ = std::make_unique<fsl::Thread>();
+  io_thread_ = std::make_unique<fsl::Thread>();
 
   auto gpu_thread_success = gpu_thread_->Run();
   auto io_thread_success = io_thread_->Run();
 
-  FTL_CHECK(gpu_thread_success) << "Must be able to create the GPU thread";
-  FTL_CHECK(io_thread_success) << "Must be able to create the IO thread";
+  FXL_CHECK(gpu_thread_success) << "Must be able to create the GPU thread";
+  FXL_CHECK(io_thread_success) << "Must be able to create the IO thread";
 
-  auto ui_task_runner = mtl::MessageLoop::GetCurrent()->task_runner();
+  auto ui_task_runner = fsl::MessageLoop::GetCurrent()->task_runner();
   auto gpu_task_runner = gpu_thread_->TaskRunner();
   auto io_task_runner = io_thread_->TaskRunner();
 
@@ -61,7 +59,7 @@ App::App() {
                                      ));
 
   if (!icu_data::Initialize(context_.get())) {
-    FTL_LOG(ERROR) << "Could not initialize ICU data.";
+    FXL_LOG(ERROR) << "Could not initialize ICU data.";
   }
 
   blink::Settings settings;
@@ -86,13 +84,13 @@ App::~App() {
 }
 
 App& App::Shared() {
-  FTL_DCHECK(g_app);
+  FXL_DCHECK(g_app);
   return *g_app;
 }
 
 void App::WaitForPlatformViewIds(
     std::vector<PlatformViewInfo>* platform_view_ids) {
-  ftl::AutoResetWaitableEvent latch;
+  fxl::AutoResetWaitableEvent latch;
 
   blink::Threads::UI()->PostTask([this, platform_view_ids, &latch]() {
     WaitForPlatformViewsIdsUIThread(platform_view_ids, &latch);
@@ -103,7 +101,7 @@ void App::WaitForPlatformViewIds(
 
 void App::WaitForPlatformViewsIdsUIThread(
     std::vector<PlatformViewInfo>* platform_view_ids,
-    ftl::AutoResetWaitableEvent* latch) {
+    fxl::AutoResetWaitableEvent* latch) {
   for (auto it = controllers_.begin(); it != controllers_.end(); it++) {
     ApplicationControllerImpl* controller = it->first;
 
@@ -155,14 +153,14 @@ void App::UpdateProcessLabel() {
     label = base_label_;
   } else {
     std::string suffix = " (+" + std::to_string(controllers_.size() - 1) + ")";
-    if (base_label_.size() + suffix.size() <= MX_MAX_NAME_LEN - 1) {
+    if (base_label_.size() + suffix.size() <= ZX_MAX_NAME_LEN - 1) {
       label = base_label_ + suffix;
     } else {
-      label = base_label_.substr(0, MX_MAX_NAME_LEN - 1 - suffix.size() - 3) +
+      label = base_label_.substr(0, ZX_MAX_NAME_LEN - 1 - suffix.size() - 3) +
               "..." + suffix;
     }
   }
-  mx::process::self().set_property(MX_PROP_NAME, label.c_str(), label.size());
+  zx::process::self().set_property(ZX_PROP_NAME, label.c_str(), label.size());
 }
 
 }  // namespace flutter_runner

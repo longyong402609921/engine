@@ -88,7 +88,9 @@ public class TextInputPlugin implements MethodCallHandler {
             return InputType.TYPE_CLASS_PHONE;
 
         int textType = InputType.TYPE_CLASS_TEXT;
-        if (inputType.equals("TextInputType.emailAddress"))
+        if (inputType.equals("TextInputType.multiline"))
+            textType |= InputType.TYPE_TEXT_FLAG_MULTI_LINE;
+        else if (inputType.equals("TextInputType.emailAddress"))
             textType |= InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS;
         else if (inputType.equals("TextInputType.url"))
             textType |= InputType.TYPE_TEXT_VARIATION_URI;
@@ -96,10 +98,19 @@ public class TextInputPlugin implements MethodCallHandler {
             // Note: both required. Some devices ignore TYPE_TEXT_FLAG_NO_SUGGESTIONS.
             textType |= InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
             textType |= InputType.TYPE_TEXT_VARIATION_PASSWORD;
-        } else if (autocorrect) {
+        } else {
+          if (autocorrect)
             textType |= InputType.TYPE_TEXT_FLAG_AUTO_CORRECT;
+          if (inputType.equals("TextInputType.text") || inputType.equals("TextInputType.multiline"))
+            textType |= InputType.TYPE_TEXT_FLAG_CAP_SENTENCES;
         }
         return textType;
+    }
+
+    private static int inputActionFromTextInputAction(String inputAction) {
+        if (inputAction.equals("TextInputAction.newline"))
+            return EditorInfo.IME_ACTION_NONE;
+        return EditorInfo.IME_ACTION_DONE;
     }
 
     public InputConnection createInputConnection(FlutterView view, EditorInfo outAttrs)
@@ -111,13 +122,26 @@ public class TextInputPlugin implements MethodCallHandler {
             mConfiguration.getString("inputType"),
             mConfiguration.optBoolean("obscureText"),
             mConfiguration.optBoolean("autocorrect", true));
-        if (!mConfiguration.isNull("actionLabel"))
-          outAttrs.actionLabel = mConfiguration.getString("actionLabel");
-        outAttrs.imeOptions = EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_FULLSCREEN;
+        outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN;
+        int enterAction;
+        if (mConfiguration.isNull("inputAction")) {
+            // If an explicit input action isn't set, then default to none for multi-line fields
+            // and done for single line fields.
+            enterAction = (InputType.TYPE_TEXT_FLAG_MULTI_LINE & outAttrs.inputType) != 0
+                ? EditorInfo.IME_ACTION_NONE
+                : EditorInfo.IME_ACTION_DONE;
+        } else {
+            enterAction = inputActionFromTextInputAction(mConfiguration.getString("inputAction"));
+        }
+        if (!mConfiguration.isNull("actionLabel")) {
+            outAttrs.actionLabel = mConfiguration.getString("actionLabel");
+            outAttrs.actionId = enterAction;
+        }
+        outAttrs.imeOptions |= enterAction;
 
         InputConnectionAdaptor connection = new InputConnectionAdaptor(view, mClient, mFlutterChannel, mEditable);
-        outAttrs.initialSelStart = Math.max(Selection.getSelectionStart(mEditable), 0);
-        outAttrs.initialSelEnd = Math.max(Selection.getSelectionEnd(mEditable), 0);
+        outAttrs.initialSelStart = Selection.getSelectionStart(mEditable);
+        outAttrs.initialSelEnd = Selection.getSelectionEnd(mEditable);
 
         return connection;
     }

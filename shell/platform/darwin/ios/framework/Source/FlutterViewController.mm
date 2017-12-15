@@ -7,9 +7,11 @@
 #include <memory>
 
 #include "flutter/common/threads.h"
+#include "flutter/flow/texture.h"
 #include "flutter/fml/platform/darwin/platform_version.h"
 #include "flutter/fml/platform/darwin/scoped_block.h"
 #include "flutter/fml/platform/darwin/scoped_nsobject.h"
+#include "flutter/lib/ui/painting/resource_context.h"
 #include "flutter/shell/platform/darwin/common/buffer_conversions.h"
 #include "flutter/shell/platform/darwin/common/platform_mac.h"
 #include "flutter/shell/platform/darwin/ios/framework/Headers/FlutterCodecs.h"
@@ -19,9 +21,10 @@
 #include "flutter/shell/platform/darwin/ios/framework/Source/FlutterTextInputPlugin.h"
 #include "flutter/shell/platform/darwin/ios/framework/Source/flutter_main_ios.h"
 #include "flutter/shell/platform/darwin/ios/framework/Source/flutter_touch_mapper.h"
+#include "flutter/shell/platform/darwin/ios/ios_external_texture_gl.h"
 #include "flutter/shell/platform/darwin/ios/platform_view_ios.h"
-#include "lib/ftl/functional/make_copyable.h"
-#include "lib/ftl/time/time_delta.h"
+#include "lib/fxl/functional/make_copyable.h"
+#include "lib/fxl/time/time_delta.h"
 
 namespace {
 
@@ -32,17 +35,17 @@ class PlatformMessageResponseDarwin : public blink::PlatformMessageResponse {
 
  public:
   void Complete(std::vector<uint8_t> data) override {
-    ftl::RefPtr<PlatformMessageResponseDarwin> self(this);
+    fxl::RefPtr<PlatformMessageResponseDarwin> self(this);
     blink::Threads::Platform()->PostTask(
-        ftl::MakeCopyable([ self, data = std::move(data) ]() mutable {
+        fxl::MakeCopyable([ self, data = std::move(data) ]() mutable {
           self->callback_.get()(shell::GetNSDataFromVector(data));
         }));
   }
 
   void CompleteEmpty() override {
-    ftl::RefPtr<PlatformMessageResponseDarwin> self(this);
+    fxl::RefPtr<PlatformMessageResponseDarwin> self(this);
     blink::Threads::Platform()->PostTask(
-        ftl::MakeCopyable([self]() mutable { self->callback_.get()(nil); }));
+        fxl::MakeCopyable([self]() mutable { self->callback_.get()(nil); }));
   }
 
  private:
@@ -72,10 +75,13 @@ class PlatformMessageResponseDarwin : public blink::PlatformMessageResponse {
   fml::scoped_nsprotocol<FlutterMethodChannel*> _textInputChannel;
   fml::scoped_nsprotocol<FlutterBasicMessageChannel*> _lifecycleChannel;
   fml::scoped_nsprotocol<FlutterBasicMessageChannel*> _systemChannel;
+  fml::scoped_nsprotocol<FlutterBasicMessageChannel*> _settingsChannel;
   fml::scoped_nsprotocol<UIView*> _launchView;
+  int64_t _nextTextureId;
   bool _platformSupportsTouchTypes;
   bool _platformSupportsTouchPressure;
   bool _platformSupportsTouchOrientationAndTilt;
+  bool _platformSupportsSafeAreaInsets;
   BOOL _initialized;
   BOOL _connected;
 }
@@ -124,11 +130,12 @@ class PlatformMessageResponseDarwin : public blink::PlatformMessageResponse {
   _platformSupportsTouchTypes = fml::IsPlatformVersionAtLeast(9);
   _platformSupportsTouchPressure = fml::IsPlatformVersionAtLeast(9);
   _platformSupportsTouchOrientationAndTilt = fml::IsPlatformVersionAtLeast(9, 1);
+  _platformSupportsSafeAreaInsets = fml::IsPlatformVersionAtLeast(11, 0);
 
   _orientationPreferences = UIInterfaceOrientationMaskAll;
   _statusBarStyle = UIStatusBarStyleDefault;
   _platformView = std::make_shared<shell::PlatformViewIOS>(
-      reinterpret_cast<CAEAGLLayer*>(self.view.layer));
+      reinterpret_cast<CAEAGLLayer*>(self.view.layer), self);
 
   _platformView->Attach(
       // First frame callback.
@@ -136,11 +143,13 @@ class PlatformMessageResponseDarwin : public blink::PlatformMessageResponse {
         TRACE_EVENT0("flutter", "First Frame");
         if (_launchView) {
           [UIView animateWithDuration:0.2
-                           animations:^{ _launchView.get().alpha = 0; }
-                           completion:^(BOOL finished){
-                             [_launchView.get() removeFromSuperview];
-                             _launchView.reset();
-                           }];
+              animations:^{
+                _launchView.get().alpha = 0;
+              }
+              completion:^(BOOL finished) {
+                [_launchView.get() removeFromSuperview];
+                _launchView.reset();
+              }];
         }
       });
   _platformView->SetupResourceContextOnIOThread();
@@ -172,6 +181,11 @@ class PlatformMessageResponseDarwin : public blink::PlatformMessageResponse {
 
   _systemChannel.reset([[FlutterBasicMessageChannel alloc]
          initWithName:@"flutter/system"
+      binaryMessenger:self
+                codec:[FlutterJSONMessageCodec sharedInstance]]);
+
+  _settingsChannel.reset([[FlutterBasicMessageChannel alloc]
+         initWithName:@"flutter/settings"
       binaryMessenger:self
                 codec:[FlutterJSONMessageCodec sharedInstance]]);
 
@@ -245,6 +259,11 @@ class PlatformMessageResponseDarwin : public blink::PlatformMessageResponse {
              selector:@selector(onMemoryWarning:)
                  name:UIApplicationDidReceiveMemoryWarningNotification
                object:nil];
+
+  [center addObserver:self
+             selector:@selector(onUserSettingsChanged:)
+                 name:UIContentSizeCategoryDidChangeNotification
+               object:nil];
 }
 
 - (void)setInitialRoute:(NSString*)route {
@@ -298,8 +317,8 @@ class PlatformMessageResponseDarwin : public blink::PlatformMessageResponse {
       [[[NSBundle mainBundle] infoDictionary] objectForKey:@"UILaunchStoryboardName"];
   if (launchStoryboardName && !self.isBeingPresented && !self.isMovingToParentViewController) {
     UIViewController* launchViewController =
-        [[UIStoryboard storyboardWithName:launchStoryboardName
-                                   bundle:nil] instantiateInitialViewController];
+        [[UIStoryboard storyboardWithName:launchStoryboardName bundle:nil]
+            instantiateInitialViewController];
     _launchView.reset([launchViewController.view retain]);
     _launchView.get().frame = self.view.bounds;
     _launchView.get().autoresizingMask =
@@ -311,7 +330,7 @@ class PlatformMessageResponseDarwin : public blink::PlatformMessageResponse {
 #pragma mark - Surface creation and teardown updates
 
 - (void)surfaceUpdated:(BOOL)appeared {
-  FTL_CHECK(_platformView != nullptr);
+  FXL_CHECK(_platformView != nullptr);
 
   // NotifyCreated/NotifyDestroyed are synchronous and require hops between the UI and GPU thread.
   if (appeared) {
@@ -338,6 +357,7 @@ class PlatformMessageResponseDarwin : public blink::PlatformMessageResponse {
 - (void)viewDidAppear:(BOOL)animated {
   TRACE_EVENT0("flutter", "viewDidAppear");
   [self onLocaleUpdated:nil];
+  [self onUserSettingsChanged:nil];
   [self onVoiceOverChanged:nil];
   [_lifecycleChannel.get() sendMessage:@"AppLifecycleState.resumed"];
 
@@ -379,6 +399,8 @@ class PlatformMessageResponseDarwin : public blink::PlatformMessageResponse {
 - (void)applicationDidEnterBackground:(NSNotification*)notification {
   TRACE_EVENT0("flutter", "applicationDidEnterBackground");
   [self surfaceUpdated:NO];
+  // GrContext operations are blocked when the app is in the background.
+  blink::ResourceContext::Freeze();
   [_lifecycleChannel.get() sendMessage:@"AppLifecycleState.paused"];
 }
 
@@ -386,6 +408,7 @@ class PlatformMessageResponseDarwin : public blink::PlatformMessageResponse {
   TRACE_EVENT0("flutter", "applicationWillEnterForeground");
   if (_viewportMetrics.physical_width)
     [self surfaceUpdated:YES];
+  blink::ResourceContext::Unfreeze();
   [_lifecycleChannel.get() sendMessage:@"AppLifecycleState.inactive"];
 }
 
@@ -459,8 +482,8 @@ static inline blink::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* to
         break;
     }
 
-    FTL_DCHECK(device_id != 0);
-    CGPoint windowCoordinates = [touch locationInView:nil];
+    FXL_DCHECK(device_id != 0);
+    CGPoint windowCoordinates = [touch locationInView:self.view];
 
     blink::PointerData pointer_data;
     pointer_data.Clear();
@@ -533,7 +556,7 @@ static inline blink::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* to
     packet->SetPointerData(i++, pointer_data);
   }
 
-  blink::Threads::UI()->PostTask(ftl::MakeCopyable(
+  blink::Threads::UI()->PostTask(fxl::MakeCopyable(
       [ engine = _platformView->engine().GetWeakPtr(), packet = std::move(packet) ] {
         if (engine.get())
           engine->DispatchPointerDataPacket(*packet);
@@ -587,7 +610,8 @@ static inline blink::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* to
   _viewportMetrics.device_pixel_ratio = scale;
   _viewportMetrics.physical_width = viewSize.width * scale;
   _viewportMetrics.physical_height = viewSize.height * scale;
-  _viewportMetrics.physical_padding_top = [self statusBarPadding] * scale;
+
+  [self updateViewportPadding];
   [self updateViewportMetrics];
 
   // This must run after updateViewportMetrics so that the surface creation tasks are queued after
@@ -596,18 +620,46 @@ static inline blink::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* to
     [self surfaceUpdated:YES];
 }
 
+- (void)viewSafeAreaInsetsDidChange {
+  if (_platformSupportsSafeAreaInsets) {
+    [self updateViewportPadding];
+    [self updateViewportMetrics];
+    [super viewSafeAreaInsetsDidChange];
+  }
+}
+
+// Updates _viewportMetrics physical padding.
+//
+// Viewport padding represents the iOS safe area insets.
+- (void)updateViewportPadding {
+  CGFloat scale = [UIScreen mainScreen].scale;
+  // TODO(cbracken) once clang toolchain compiler-rt has been updated, replace with
+  // if (@available(iOS 11, *)) {
+  if (_platformSupportsSafeAreaInsets) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunguarded-availability-new"
+    _viewportMetrics.physical_padding_top = self.view.safeAreaInsets.top * scale;
+    _viewportMetrics.physical_padding_left = self.view.safeAreaInsets.left * scale;
+    _viewportMetrics.physical_padding_right = self.view.safeAreaInsets.right * scale;
+    _viewportMetrics.physical_padding_bottom = self.view.safeAreaInsets.bottom * scale;
+#pragma clang diagnostic pop
+  } else {
+    _viewportMetrics.physical_padding_top = [self statusBarPadding] * scale;
+  }
+}
+
 #pragma mark - Keyboard events
 
 - (void)keyboardWillChangeFrame:(NSNotification*)notification {
   NSDictionary* info = [notification userInfo];
   CGFloat bottom = CGRectGetHeight([[info objectForKey:UIKeyboardFrameEndUserInfoKey] CGRectValue]);
   CGFloat scale = [UIScreen mainScreen].scale;
-  _viewportMetrics.physical_padding_bottom = bottom * scale;
+  _viewportMetrics.physical_view_inset_bottom = bottom * scale;
   [self updateViewportMetrics];
 }
 
 - (void)keyboardWillBeHidden:(NSNotification*)notification {
-  _viewportMetrics.physical_padding_bottom = 0;
+  _viewportMetrics.physical_view_inset_bottom = 0;
   [self updateViewportMetrics];
 }
 
@@ -623,6 +675,9 @@ static inline blink::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* to
   switch (action) {
     case FlutterTextInputActionDone:
       actionString = @"TextInputAction.done";
+      break;
+    case FlutterTextInputActionNewline:
+      actionString = @"TextInputAction.newline";
       break;
   }
   [_textInputChannel.get() invokeMethod:@"TextInputClient.performAction"
@@ -688,16 +743,78 @@ static inline blink::PointerData::DeviceKind DeviceKindFromTouchType(UITouch* to
   [_localizationChannel.get() invokeMethod:@"setLocale" arguments:@[ languageCode, countryCode ]];
 }
 
+#pragma mark - Set user settings
+
+- (void)onUserSettingsChanged:(NSNotification*)notification {
+  [_settingsChannel.get() sendMessage:@{
+    @"textScaleFactor" : @([self textScaleFactor]),
+    @"alwaysUse24HourFormat" : @([self isAlwaysUse24HourFormat]),
+  }];
+}
+
+- (CGFloat)textScaleFactor {
+  UIContentSizeCategory category = [UIApplication sharedApplication].preferredContentSizeCategory;
+  // The delta is computed based on the following:
+  // - L (large) is the default 1.0 scale.
+  // - The scale is linear spanning from XS to XXXL.
+  // - XXXL = 1.4 * XS.
+  //
+  // L    = 1.0      = XS + 3 * delta
+  // XXXL = 1.4 * XS = XS + 6 * delta
+  const CGFloat delta = 0.055555;
+  if ([category isEqualToString:UIContentSizeCategoryExtraSmall])
+    return 1.0 - 3 * delta;
+  else if ([category isEqualToString:UIContentSizeCategorySmall])
+    return 1.0 - 2 * delta;
+  else if ([category isEqualToString:UIContentSizeCategoryMedium])
+    return 1.0 - delta;
+  else if ([category isEqualToString:UIContentSizeCategoryLarge])
+    return 1.0;
+  else if ([category isEqualToString:UIContentSizeCategoryExtraLarge])
+    return 1.0 + delta;
+  else if ([category isEqualToString:UIContentSizeCategoryExtraExtraLarge])
+    return 1.0 + 2 * delta;
+  else if ([category isEqualToString:UIContentSizeCategoryExtraExtraExtraLarge])
+    return 1.0 + 3 * delta;
+  else
+    return 1.0;
+}
+
+- (BOOL)isAlwaysUse24HourFormat {
+  // iOS does not report its "24-Hour Time" user setting in the API. Instead, it applies
+  // it automatically to NSDateFormatter when used with [NSLocale currentLocale]. It is
+  // essential that [NSLocale currentLocale] is used. Any custom locale, even the one
+  // that's the same as [NSLocale currentLocale] will ignore the 24-hour option (there
+  // must be some internal field that's not exposed to developers).
+  //
+  // Therefore this option behaves differently across Android and iOS. On Android this
+  // setting is exposed standalone, and can therefore be applied to all locales, whether
+  // the "current system locale" or a custom one. On iOS it only applies to the current
+  // system locale. Widget implementors must take this into account in order to provide
+  // platform-idiomatic behavior in their widgets.
+  NSString* dateFormat =
+      [NSDateFormatter dateFormatFromTemplate:@"j" options:0 locale:[NSLocale currentLocale]];
+  return [dateFormat rangeOfString:@"a"].location == NSNotFound;
+}
+
 #pragma mark - Status Bar touch event handling
 
 // Standard iOS status bar height in pixels.
 constexpr CGFloat kStandardStatusBarHeight = 20.0;
 
 - (void)handleStatusBarTouches:(UIEvent*)event {
+  CGFloat standardStatusBarHeight = kStandardStatusBarHeight;
+  if (_platformSupportsSafeAreaInsets) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunguarded-availability-new"
+    standardStatusBarHeight = self.view.safeAreaInsets.top;
+#pragma clang diagnostic pop
+  }
+
   // If the status bar is double-height, don't handle status bar taps. iOS
   // should open the app associated with the status bar.
   CGRect statusBarFrame = [UIApplication sharedApplication].statusBarFrame;
-  if (statusBarFrame.size.height != kStandardStatusBarHeight) {
+  if (statusBarFrame.size.height != standardStatusBarHeight) {
     return;
   }
 
@@ -752,14 +869,14 @@ constexpr CGFloat kStandardStatusBarHeight = 20.0;
               message:(NSData*)message
           binaryReply:(FlutterBinaryReply)callback {
   NSAssert(channel, @"The channel must not be null");
-  ftl::RefPtr<PlatformMessageResponseDarwin> response =
+  fxl::RefPtr<PlatformMessageResponseDarwin> response =
       (callback == nil) ? nullptr
-                        : ftl::MakeRefCounted<PlatformMessageResponseDarwin>(^(NSData* reply) {
+                        : fxl::MakeRefCounted<PlatformMessageResponseDarwin>(^(NSData* reply) {
                             callback(reply);
                           });
-  ftl::RefPtr<blink::PlatformMessage> platformMessage =
-      (message == nil) ? ftl::MakeRefCounted<blink::PlatformMessage>(channel.UTF8String, response)
-                       : ftl::MakeRefCounted<blink::PlatformMessage>(
+  fxl::RefPtr<blink::PlatformMessage> platformMessage =
+      (message == nil) ? fxl::MakeRefCounted<blink::PlatformMessage>(channel.UTF8String, response)
+                       : fxl::MakeRefCounted<blink::PlatformMessage>(
                              channel.UTF8String, shell::GetVectorFromNSData(message), response);
   _platformView->DispatchPlatformMessage(platformMessage);
 }
@@ -768,5 +885,21 @@ constexpr CGFloat kStandardStatusBarHeight = 20.0;
               binaryMessageHandler:(FlutterBinaryMessageHandler)handler {
   NSAssert(channel, @"The channel must not be null");
   _platformView->platform_message_router().SetMessageHandler(channel.UTF8String, handler);
+}
+
+#pragma mark - FlutterTextureRegistry
+
+- (int64_t)registerTexture:(NSObject<FlutterTexture>*)texture {
+  int64_t textureId = _nextTextureId++;
+  _platformView->RegisterExternalTexture(textureId, texture);
+  return textureId;
+}
+
+- (void)unregisterTexture:(int64_t)textureId {
+  _platformView->UnregisterTexture(textureId);
+}
+
+- (void)textureFrameAvailable:(int64_t)textureId {
+  _platformView->MarkTextureFrameAvailable(textureId);
 }
 @end

@@ -34,8 +34,14 @@ bool _offsetIsValid(Offset offset) {
   return true;
 }
 
+bool _radiusIsValid(Radius radius) {
+  assert(radius != null, 'Radius argument was null.');
+  assert(!radius.x.isNaN && !radius.y.isNaN, 'Radius argument contained a NaN value.');
+  return true;
+}
+
 Color _scaleAlpha(Color a, double factor) {
-  return a.withAlpha((a.alpha * factor).round());
+  return a.withAlpha((a.alpha * factor).round().clamp(0, 255));
 }
 
 /// An immutable 32 bit color value in ARGB format.
@@ -100,10 +106,10 @@ class Color {
   /// See also [fromARGB], which takes the alpha value as a floating point
   /// value.
   const Color.fromARGB(int a, int r, int g, int b) :
-    value = ((((a & 0xff) << 24) |
-                ((r & 0xff) << 16) |
-                ((g & 0xff) << 8) |
-                ((b & 0xff) << 0)) & 0xFFFFFFFF);
+    value = (((a & 0xff) << 24) |
+             ((r & 0xff) << 16) |
+             ((g & 0xff) << 8)  |
+             ((b & 0xff) << 0)) & 0xFFFFFFFF;
 
   /// Create a color from red, green, blue, and opacity, similar to `rgba()` in CSS.
   ///
@@ -117,10 +123,10 @@ class Color {
   ///
   /// See also [fromARGB], which takes the opacity as an integer value.
   const Color.fromRGBO(int r, int g, int b, double opacity) :
-    value = (((((opacity * 0xff ~/ 1) & 0xff) << 24) |
-                ((r & 0xff) << 16) |
-                ((g & 0xff) << 8) |
-                ((b & 0xff) << 0)) & 0xFFFFFFFF);
+    value = ((((opacity * 0xff ~/ 1) & 0xff) << 24) |
+              ((r                    & 0xff) << 16) |
+              ((g                    & 0xff) << 8)  |
+              ((b                    & 0xff) << 0)) & 0xFFFFFFFF;
 
   /// A 32 bit value representing this color.
   ///
@@ -155,39 +161,76 @@ class Color {
 
   /// Returns a new color that matches this color with the alpha channel
   /// replaced with `a` (which ranges from 0 to 255).
+  ///
+  /// Out of range values will have unexpected effects.
   Color withAlpha(int a) {
     return new Color.fromARGB(a, red, green, blue);
   }
 
   /// Returns a new color that matches this color with the alpha channel
   /// replaced with the given `opacity` (which ranges from 0.0 to 1.0).
+  ///
+  /// Out of range values will have unexpected effects.
   Color withOpacity(double opacity) {
     assert(opacity >= 0.0 && opacity <= 1.0);
     return withAlpha((255.0 * opacity).round());
   }
 
   /// Returns a new color that matches this color with the red channel replaced
-  /// with `r`.
+  /// with `r` (which ranges from 0 to 255).
+  ///
+  /// Out of range values will have unexpected effects.
   Color withRed(int r) {
     return new Color.fromARGB(alpha, r, green, blue);
   }
 
   /// Returns a new color that matches this color with the green channel
-  /// replaced with `g`.
+  /// replaced with `g` (which ranges from 0 to 255).
+  ///
+  /// Out of range values will have unexpected effects.
   Color withGreen(int g) {
     return new Color.fromARGB(alpha, red, g, blue);
   }
 
   /// Returns a new color that matches this color with the blue channel replaced
-  /// with `b`.
+  /// with `b` (which ranges from 0 to 255).
+  ///
+  /// Out of range values will have unexpected effects.
   Color withBlue(int b) {
     return new Color.fromARGB(alpha, red, green, b);
+  }
+
+  // See <https://www.w3.org/TR/WCAG20/#relativeluminancedef>
+  static double _linearizeColorComponent(double component) {
+    if (component <= 0.03928)
+      return component / 12.92;
+    return math.pow((component + 0.055) / 1.055, 2.4);
+  }
+
+  /// Returns a brightness value between 0 for darkest and 1 for lightest.
+  ///
+  /// Represents the relative luminance of the color. This value is computationally
+  /// expensive to calculate.
+  ///
+  /// See <https://en.wikipedia.org/wiki/Relative_luminance>.
+  double computeLuminance() {
+    // See <https://www.w3.org/TR/WCAG20/#relativeluminancedef>
+    final double R = _linearizeColorComponent(red / 0xFF);
+    final double G = _linearizeColorComponent(green / 0xFF);
+    final double B = _linearizeColorComponent(blue / 0xFF);
+    return 0.2126 * R + 0.7152 * G + 0.0722 * B;
   }
 
   /// Linearly interpolate between two colors.
   ///
   /// If either color is null, this function linearly interpolates from a
   /// transparent instance of the other color.
+  ///
+  /// Values of `t` less that 0.0 or greater than 1.0 are supported. Each
+  /// channel will be clamped to the range 0 to 255.
+  ///
+  /// This is intended to be fast but as a result may be ugly. Consider
+  /// [HSVColor] or writing custom logic for interpolating colors.
   static Color lerp(Color a, Color b, double t) {
     if (a == null && b == null)
       return null;
@@ -196,10 +239,10 @@ class Color {
     if (b == null)
       return _scaleAlpha(a, 1.0 - t);
     return new Color.fromARGB(
-      lerpDouble(a.alpha, b.alpha, t).toInt(),
-      lerpDouble(a.red, b.red, t).toInt(),
-      lerpDouble(a.green, b.green, t).toInt(),
-      lerpDouble(a.blue, b.blue, t).toInt()
+      lerpDouble(a.alpha, b.alpha, t).toInt().clamp(0, 255),
+      lerpDouble(a.red, b.red, t).toInt().clamp(0, 255),
+      lerpDouble(a.green, b.green, t).toInt().clamp(0, 255),
+      lerpDouble(a.blue, b.blue, t).toInt().clamp(0, 255),
     );
   }
 
@@ -228,25 +271,133 @@ class Color {
 ///
 /// [![Open Skia fiddle to view image.](https://flutter.github.io/assets-for-api-docs/dart-ui/blend_mode.png)](https://fiddle.skia.org/c/864acd0659c7a866ea7296a3184b8bdd)
 ///
-/// See [Paint.blendMode].
+/// The "src" (source) image is the shape or image being drawn, the "dst"
+/// (destination) image is the current contents of the canvas onto which the
+/// source is being drawn.
+///
+/// When using [saveLayer] and [restore], the blend mode of the [Paint] given to
+/// the [saveLayer] will be applied when [restore] is called. Each call to
+/// [saveLayer] introduces a new layer onto which shapes and images are painted;
+/// when [restore] is called, that layer is then _composited_ onto the parent
+/// layer, with the "src" being the most-recently-drawn shapes and images, and
+/// the "dst" being the parent layer. (For the first [saveLayer] call, the
+/// parent layer is the canvas itself.)
+///
+/// See also:
+///
+///  * [Paint.blendMode], which uses [BlendMode] to define the compositing
+///    strategy.
 enum BlendMode {
   // This list comes from Skia's SkXfermode.h and the values (order) should be
   // kept in sync.
   // See: https://skia.org/user/api/skpaint#SkXfermode
 
+  /// Drop both the source and destination images, leaving nothing.
+  ///
+  /// This corresponds to the "clear" Porter-Duff operator.
   clear,
+
+  /// Drop the destination image, only paint the source image.
+  ///
+  /// Conceptually, the destination is first cleared, then the source image is
+  /// painted.
+  ///
+  /// This corresponds to the "Copy" Porter-Duff operator.
   src,
+
+  /// Drop the source image, only paint the destination image.
+  ///
+  /// Conceptually, the source image is discarded, leaving the destination
+  /// untouched.
+  ///
+  /// This corresponds to the "Destination" Porter-Duff operator.
   dst,
+
+  /// Composite the source image over the destination image.
+  ///
+  /// This is the default value. It represents the most intuitive case, where
+  /// shapes are painted on top of what is below, with transparent areas showing
+  /// the destination layer.
+  ///
+  /// This corresponds to the "Source over Destination" Porter-Duff operator,
+  /// also known as the Painter's Algorithm.
   srcOver,
+
+  /// Composite the source image under the destination image.
+  ///
+  /// This is the opposite of [srcOver].
+  ///
+  /// This corresponds to the "Destination over Source" Porter-Duff operator.
   dstOver,
+
+  /// Show the source image, but only where the two images overlap. The
+  /// destination image is not rendered, it is treated merely as a mask.
+  ///
+  /// To show the destination image instead, consider [dstIn].
+  ///
+  /// To reverse the semantic of the mask (only showing the source where the
+  /// destination is absent, rather than where it is present), consider
+  /// [srcOut].
+  ///
+  /// This corresponds to the "Source in Destination" Porter-Duff operator.
   srcIn,
+
+  /// Show the destination image, but only where the two images overlap. The
+  /// source image is not rendered, it is treated merely as a mask.
+  ///
+  /// To show the source image instead, consider [srcIn].
+  ///
+  /// To reverse the semantic of the mask (only showing the source where the
+  /// destination is present, rather than where it is absent), consider [srcIn].
+  ///
+  /// This corresponds to the "Destination in Source" Porter-Duff operator.
   dstIn,
+
+  /// Show the source image, but only where the two images do not overlap. The
+  /// destination image is not rendered, it is treated merely as a mask.
+  ///
+  /// To show the destination image instead, consider [dstOut].
+  ///
+  /// To reverse the semantic of the mask (only showing the source where the
+  /// destination is present, rather than where it is absent), consider [srcIn].
+  ///
+  /// This corresponds to the "Source out Destination" Porter-Duff operator.
   srcOut,
+
+  /// Show the destination image, but only where the two images do not overlap. The
+  /// source image is not rendered, it is treated merely as a mask.
+  ///
+  /// To show the source image instead, consider [srcOut].
+  ///
+  /// To reverse the semantic of the mask (only showing the destination where the
+  /// source is present, rather than where it is absent), consider [dstIn].
+  ///
+  /// This corresponds to the "Destination out Source" Porter-Duff operator.
   dstOut,
+
+  /// Composite the source image over the destination image, but only where it
+  /// overlaps the destination.
+  ///
+  /// This corresponds to the "Source atop Destination" Porter-Duff operator.
   srcATop,
+
+  /// Composite the destination image over the source image, but only where it
+  /// overlaps the source.
+  ///
+  /// This corresponds to the "Destination atop Source" Porter-Duff operator.
   dstATop,
+
+  /// Composite the source and destination images, leaving transparency where
+  /// they would overlap.
+  ///
+  /// This corresponds to the "Source xor Destination" Porter-Duff operator.
   xor,
+
+  /// Composite the source and destination images by summing their components.
+  ///
+  /// This corresponds to the "Source plus Destination" Porter-Duff operator.
   plus,
+
   modulate,
 
   // Following blend modes are defined in the CSS Compositing standard.
@@ -467,6 +618,12 @@ class Paint {
   /// layer is being composited.
   ///
   /// Defaults to [BlendMode.srcOver].
+  ///
+  /// See also:
+  ///
+  ///  * [Canvas.saveLayer], which uses its [Paint]'s [blendMode] to composite
+  ///    the layer when [restore] is called.
+  ///  * [BlendMode], which discusses the user of [saveLayer] with [blendMode].
   BlendMode get blendMode {
     final int encoded = _data.getInt32(_kBlendModeOffset, _kFakeHostEndian);
     return BlendMode.values[encoded ^ _kBlendModeDefault];
@@ -711,9 +868,79 @@ abstract class Image extends NativeFieldWrapperClass2 {
 /// Callback signature for [decodeImageFromList].
 typedef void ImageDecoderCallback(Image result);
 
-/// Convert an image file from a byte array into an [Image] object.
-void decodeImageFromList(Uint8List list, ImageDecoderCallback callback)
-    native "decodeImageFromList";
+/// Information for a single animation frame.
+///
+/// Obtain a FrameInfo with [Codec.getNextFrame].
+abstract class FrameInfo extends NativeFieldWrapperClass2 {
+  // The duration this frame should be shown.
+  Duration get duration => new Duration(milliseconds: _durationMillis);
+
+  int get _durationMillis native "FrameInfo_durationMillis";
+
+  // The Image object for this frame.
+  Image get image native "FrameInfo_image";
+}
+
+/// A handle to an image codec.
+abstract class Codec extends NativeFieldWrapperClass2 {
+  /// Number of frames in this image.
+  int get frameCount native "Codec_frameCount";
+
+  /// Number of times to repeat the animation.
+  ///
+  /// * 0 when the animation should be played once.
+  /// * -1 for infinity repetitions.
+  int get repetitionCount native "Codec_repetitionCount";
+
+  /// Fetches the next animation frame.
+  ///
+  /// Wraps back to the first frame after returning the last frame.
+  ///
+  /// The returned future can complete with an error if the decoding has failed.
+  Future<FrameInfo> getNextFrame() {
+    return _futurize(_getNextFrame);
+  }
+
+  /// Returns an error message on failure, null on success.
+  String _getNextFrame(_Callback<FrameInfo> callback) native "Codec_getNextFrame";
+
+  /// Release the resources used by this object. The object is no longer usable
+  /// after this method is called.
+  void dispose() native "Codec_dispose";
+}
+
+/// Instantiates an image codec [Codec] object.
+///
+/// [list] is the binary image data (e.g a PNG or GIF binary data).
+/// The data can be for either static or animated images.
+///
+/// The returned future can complete with an error if the image decoding has
+/// failed.
+Future<Codec> instantiateImageCodec(Uint8List list) {
+  return _futurize(
+    (_Callback<Codec> callback) => _instantiateImageCodec(list, callback)
+  );
+}
+
+/// Instantiates a [Codec] object for an image binary data.
+///
+/// Returns an error message if the instantiation has failed, null otherwise.
+String _instantiateImageCodec(Uint8List list, _Callback<Codec> callback)
+  native "instantiateImageCodec";
+
+/// Loads a single image frame from a byte array into an [Image] object.
+///
+/// This is a convenience wrapper around [instantiateImageCodec].
+/// Prefer using [instantiateImageCodec] which also supports multi frame images.
+void decodeImageFromList(Uint8List list, ImageDecoderCallback callback) {
+  _decodeImageFromListAsync(list, callback);
+}
+
+Future<Null> _decodeImageFromListAsync(Uint8List list, ImageDecoderCallback callback) async {
+  final Codec codec = await instantiateImageCodec(list);
+  final FrameInfo frameInfo = await codec.getNextFrame();
+  callback(frameInfo.image);
+}
 
 /// Determines the winding rule that decides how the interior of a [Path] is
 /// calculated.
@@ -821,10 +1048,10 @@ class Path extends NativeFieldWrapperClass2 {
   /// is less than 1, it is an ellipse.
   void relativeConicTo(double x1, double y1, double x2, double y2, double w) native "Path_relativeConicTo";
 
-  /// If the [forceMoveTo] argument is false, adds a straight line
+  /// If the `forceMoveTo` argument is false, adds a straight line
   /// segment and an arc segment.
   ///
-  /// If the [forceMoveTo] argument is true, starts a new subpath
+  /// If the `forceMoveTo` argument is true, starts a new subpath
   /// consisting of an arc segment.
   ///
   /// In either case, the arc segment consists of the arc that follows
@@ -835,7 +1062,7 @@ class Path extends NativeFieldWrapperClass2 {
   /// that intersects the center of the rectangle and with positive
   /// angles going clockwise around the oval.
   ///
-  /// The line segment added if [forceMoveTo] is false starts at the
+  /// The line segment added if `forceMoveTo` is false starts at the
   /// current point and ends at the start of the arc.
   void arcTo(Rect rect, double startAngle, double sweepAngle, bool forceMoveTo) {
     assert(_rectIsValid(rect));
@@ -843,6 +1070,64 @@ class Path extends NativeFieldWrapperClass2 {
   }
   void _arcTo(double left, double top, double right, double bottom,
               double startAngle, double sweepAngle, bool forceMoveTo) native "Path_arcTo";
+
+  /// Appends up to four conic curves weighted to describe an oval of `radius`
+  /// and rotated by `rotation`.
+  ///
+  /// The first curve begins from the last point in the path and the last ends
+  /// at `arcEnd`. The curves follow a path in a direction determined by
+  /// `clockwise` and `largeArc` in such a way that the sweep angle
+  /// is always less than 360 degrees.
+  ///
+  /// A simple line is appended if either either radii are zero or the last
+  /// point in the path is `arcEnd`. The radii are scaled to fit the last path
+  /// point if both are greater than zero but too small to describe an arc.
+  ///
+  void arcToPoint(Offset arcEnd, {
+    Radius radius: Radius.zero,
+    double rotation: 0.0,
+    bool largeArc: false,
+    bool clockwise: true,
+    }) {
+    assert(_offsetIsValid(arcEnd));
+    assert(_radiusIsValid(radius));
+    _arcToPoint(arcEnd.dx, arcEnd.dy, radius.x, radius.y, rotation,
+                largeArc, clockwise);
+  }
+  void _arcToPoint(double arcEndX, double arcEndY, double radiusX,
+                   double radiusY, double rotation, bool largeArc,
+                   bool clockwise) native "Path_arcToPoint";
+
+
+  /// Appends up to four conic curves weighted to describe an oval of `radius`
+  /// and rotated by `rotation`.
+  ///
+  /// The last path point is described by (px, py).
+  ///
+  /// The first curve begins from the last point in the path and the last ends
+  /// at `arcEndDelta.dx + px` and `arcEndDelta.dy + py`. The curves follow a
+  /// path in a direction determined by `clockwise` and `largeArc`
+  /// in such a way that the sweep angle is always less than 360 degrees.
+  ///
+  /// A simple line is appended if either either radii are zero, or, both
+  /// `arcEndDelta.dx` and `arcEndDelta.dy` are zero. The radii are scaled to
+  /// fit the last path point if both are greater than zero but too small to
+  /// describe an arc.
+  void relativeArcToPoint(Offset arcEndDelta, {
+    Radius radius: Radius.zero,
+    double rotation: 0.0,
+    bool largeArc: false,
+    bool clockwise: true,
+    }) {
+    assert(_offsetIsValid(arcEndDelta));
+    assert(_radiusIsValid(radius));
+    _relativeArcToPoint(arcEndDelta.dx, arcEndDelta.dy, radius.x, radius.y,
+                        rotation, largeArc, clockwise);
+  }
+  void _relativeArcToPoint(double arcEndX, double arcEndY, double radiusX,
+                           double radiusY, double rotation,
+                           bool largeArc, bool clockwise)
+                           native "Path_relativeArcToPoint";
 
   /// Adds a new subpath that consists of four lines that outline the
   /// given rectangle.
@@ -1381,6 +1666,18 @@ enum PointMode {
   polygon,
 }
 
+/// Defines how a new clip region should be merged with the existing clip
+/// region.
+///
+/// Used by [Canvas.clipRect].
+enum ClipOp {
+  /// Subtract the new region from the existing region.
+  difference,
+
+  /// Intersect the new region from the existing region.
+  intersect,
+}
+
 /// An interface for recording graphical operations.
 ///
 /// [Canvas] objects are used in creating [Picture] objects, which can
@@ -1540,6 +1837,8 @@ class Canvas extends NativeFieldWrapperClass2 {
   ///
   ///  * [save], which saves the current state, but does not create a new layer
   ///    for subsequent commands.
+  ///  * [BlendMode], which discusses the use of [Paint.blendMode] with
+  ///    [saveLayer].
   void saveLayer(Rect bounds, Paint paint) {
     assert(_rectIsValid(bounds));
     assert(paint != null);
@@ -1612,14 +1911,19 @@ class Canvas extends NativeFieldWrapperClass2 {
   /// intersect with the clip boundary, this can result in incorrect blending at
   /// the clip boundary. See [saveLayer] for a discussion of how to address
   /// that.
-  void clipRect(Rect rect) {
+  ///
+  /// Use [ClipOp.difference] to subtract the provided rectangle from the
+  /// current clip.
+  void clipRect(Rect rect, { ClipOp clipOp: ClipOp.intersect }) {
     assert(_rectIsValid(rect));
-    _clipRect(rect.left, rect.top, rect.right, rect.bottom);
+    assert(clipOp != null);
+    _clipRect(rect.left, rect.top, rect.right, rect.bottom, clipOp.index);
   }
   void _clipRect(double left,
                  double top,
                  double right,
-                 double bottom) native "Canvas_clipRect";
+                 double bottom,
+                 int clipOp) native "Canvas_clipRect";
 
   /// Reduces the clip region to the intersection of the current clip and the
   /// given rounded rectangle.
@@ -1989,7 +2293,6 @@ class Canvas extends NativeFieldWrapperClass2 {
     assert(rects != null);
     assert(colors != null);
     assert(blendMode != null);
-    assert(cullRect != null);
     assert(paint != null);
 
     final int rectCount = rects.length;
@@ -2055,7 +2358,6 @@ class Canvas extends NativeFieldWrapperClass2 {
     assert(rects != null);
     assert(colors != null);
     assert(blendMode != null);
-    assert(cullRect != null);
     assert(paint != null);
 
     final int rectCount = rects.length;
@@ -2152,3 +2454,45 @@ class PictureRecorder extends NativeFieldWrapperClass2 {
   /// Returns null if the PictureRecorder is not associated with a canvas.
   Picture endRecording() native "PictureRecorder_endRecording";
 }
+
+/// Generic callback signature, used by [_futurize].
+typedef void _Callback<T>(T result);
+
+/// Signature for a method that receives a [_Callback].
+///
+/// Return value should be null on success, and a string error message on
+/// failure.
+typedef String _Callbacker<T>(_Callback<T> callback);
+
+/// Converts a method that receives a value-returning callback to a method that
+/// returns a Future.
+///
+/// Example usage:
+/// ```dart
+/// typedef void IntCallback(int result);
+/// 
+/// void doSomethingAndCallback(IntCallback callback) {
+///   new Timer(new Duration(seconds: 1), () { callback(1); });
+/// }
+/// 
+/// Future<int> doSomething() {
+///   return _futurize(domeSomethingAndCallback);
+/// }
+/// ```
+///
+Future<T> _futurize<T>(_Callbacker<T> callbacker) {
+  final Completer<T> completer = new Completer<T>.sync();
+  final String err = callbacker((t) {
+    if (t == null) {
+      completer.completeError(new Exception('operation failed'));
+    } else {
+      completer.complete(t);
+    }
+  });
+
+  if (err != null)
+    throw new Exception(err);
+
+  return completer.future;
+}
+

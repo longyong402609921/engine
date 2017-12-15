@@ -24,7 +24,7 @@ void TransformLayer::Preroll(PrerollContext* context, const SkMatrix& matrix) {
 #if defined(OS_FUCHSIA)
 
 void TransformLayer::UpdateScene(SceneUpdateContext& context) {
-  FTL_DCHECK(needs_system_composite());
+  FXL_DCHECK(needs_system_composite());
 
   SceneUpdateContext::Transform transform(context, transform_);
   UpdateSceneChildren(context);
@@ -32,9 +32,9 @@ void TransformLayer::UpdateScene(SceneUpdateContext& context) {
 
 #endif  // defined(OS_FUCHSIA)
 
-void TransformLayer::Paint(PaintContext& context) {
+void TransformLayer::Paint(PaintContext& context) const {
   TRACE_EVENT0("flutter", "TransformLayer::Paint");
-  FTL_DCHECK(needs_painting());
+  FXL_DCHECK(needs_painting());
 
   SkAutoCanvasRestore save(&context.canvas, true);
   context.canvas.concat(transform_);

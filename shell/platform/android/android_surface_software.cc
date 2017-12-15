@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "flutter/fml/trace_event.h"
-#include "lib/ftl/logging.h"
+#include "lib/fxl/logging.h"
 
 namespace shell {
 
@@ -34,8 +34,7 @@ bool GetSkColorType(int32_t buffer_format, SkColorType* color_type) {
 }  // anonymous namespace
 
 AndroidSurfaceSoftware::AndroidSurfaceSoftware()
-    : AndroidSurface(),
-      target_color_type_(kRGBA_8888_SkColorType) {}
+    : AndroidSurface(), target_color_type_(kRGBA_8888_SkColorType) {}
 
 AndroidSurfaceSoftware::~AndroidSurfaceSoftware() = default;
 
@@ -102,20 +101,19 @@ bool AndroidSurfaceSoftware::PresentBackingStore(
 
   SkColorType color_type;
   if (GetSkColorType(native_buffer.format, &color_type)) {
-    SkImageInfo native_image_info = SkImageInfo::Make(
-        native_buffer.width, native_buffer.height, color_type, kPremul_SkAlphaType);
+    SkImageInfo native_image_info =
+        SkImageInfo::Make(native_buffer.width, native_buffer.height, color_type,
+                          kPremul_SkAlphaType);
 
     std::unique_ptr<SkCanvas> canvas = SkCanvas::MakeRasterDirect(
-        native_image_info,
-        native_buffer.bits,
+        native_image_info, native_buffer.bits,
         native_buffer.stride * SkColorTypeBytesPerPixel(color_type));
 
     if (canvas) {
       SkBitmap bitmap;
       if (bitmap.installPixels(pixmap)) {
         canvas->drawBitmapRect(
-            bitmap,
-            SkRect::MakeIWH(native_buffer.width, native_buffer.height),
+            bitmap, SkRect::MakeIWH(native_buffer.width, native_buffer.height),
             nullptr);
       }
     }
@@ -137,7 +135,7 @@ bool AndroidSurfaceSoftware::OnScreenSurfaceResize(const SkISize& size) const {
 }
 
 bool AndroidSurfaceSoftware::SetNativeWindow(
-    ftl::RefPtr<AndroidNativeWindow> window,
+    fxl::RefPtr<AndroidNativeWindow> window,
     PlatformView::SurfaceConfig config) {
   native_window_ = std::move(window);
   if (!(native_window_ && native_window_->IsValid()))
@@ -148,11 +146,6 @@ bool AndroidSurfaceSoftware::SetNativeWindow(
   if (!GetSkColorType(window_format, &target_color_type_))
     return false;
   return true;
-}
-
-void AndroidSurfaceSoftware::SetFlutterView(
-    const fml::jni::JavaObjectWeakGlobalRef& flutter_view) {
-  flutter_view_ = flutter_view;
 }
 
 }  // namespace shell

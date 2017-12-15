@@ -3,6 +3,17 @@ Contributing to the Flutter engine
 
 [![Build Status](https://travis-ci.org/flutter/engine.svg)](https://travis-ci.org/flutter/engine)
 
+I built it before. Remind me, how do I do it again?
+--------------------
+
+If you have previously built the engine (i.e. your environment is already setup) and just want a refresher, then feel free to skip to one of the following sections:
+
+- [Build for Android](#android-cross-compiling-from-mac-or-linux)
+- [Build for iOS](#ios-cross-compiling-from-mac)
+- [Build flutter_tester](#desktop-mac-and-linux-for-tests)
+
+Otherwise, begin from the next section, which will help you prepare your environment.
+
 Things you will need
 --------------------
 
@@ -42,7 +53,6 @@ solutions = [
     "safesync_url": "",
   },
 ]
-target_os = ["android"]
 ```
 
  * `cd engine` (Change to the directory in which you put the `.gclient` file.)
@@ -201,11 +211,13 @@ To start working on a patch:
  * Make sure you are in the `engine/src/flutter` directory.
  * `git fetch upstream`
  * `git checkout upstream/master -b name_of_your_branch`
- * Hack away. Please peruse our
-   [style guides](https://flutter.io/style-guide/) and
-   [design principles](https://flutter.io/design-principles/) before
-   working on anything non-trivial. These guidelines are intended to
-   keep the code consistent and avoid common pitfalls.
+ * Hack away.
+   * Please peruse our [style guides](https://flutter.io/style-guide/) and
+     [design principles](https://flutter.io/design-principles/) before
+     working on anything non-trivial. These guidelines are intended to
+     keep the code consistent and avoid common pitfalls.
+   * C, C++, and Objective-C code should be formatted with `clang-format` before
+     submission (use `buildtools/<OS>/clang/bin/clang-format --style=file -i`).
  * `git commit -a -m "<your brief but informative commit message>"`
  * `git push origin name_of_your_branch`
 

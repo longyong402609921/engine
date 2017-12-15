@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <trace/event.h>
+
 #include "flutter/content_handler/vulkan_surface_pool.h"
-#include "apps/tracing/lib/trace/event.h"
+#include "flutter/glue/trace_event.h"
 #include "third_party/skia/include/gpu/GrContext.h"
 
 namespace flutter_runner {
@@ -11,7 +13,7 @@ namespace flutter_runner {
 VulkanSurfacePool::VulkanSurfacePool(vulkan::VulkanProcTable& p_vk,
                                      sk_sp<GrContext> context,
                                      sk_sp<GrVkBackendContext> backend_context,
-                                     mozart::client::Session* mozart_session)
+                                     scenic_lib::Session* mozart_session)
     : vk_(p_vk),
       context_(std::move(context)),
       backend_context_(std::move(backend_context)),
@@ -24,12 +26,12 @@ VulkanSurfacePool::AcquireSurface(const SkISize& size) {
   auto surface = GetCachedOrCreateSurface(size);
 
   if (surface == nullptr) {
-    FTL_DLOG(ERROR) << "Could not acquire surface";
+    FXL_DLOG(ERROR) << "Could not acquire surface";
     return nullptr;
   }
 
   if (!surface->FlushSessionAcquireAndReleaseEvents()) {
-    FTL_DLOG(ERROR) << "Could not flush acquir/release events for buffer.";
+    FXL_DLOG(ERROR) << "Could not flush acquire/release events for buffer.";
     return nullptr;
   }
 
@@ -43,7 +45,7 @@ VulkanSurfacePool::GetCachedOrCreateSurface(const SkISize& size) {
     return CreateSurface(size);
   }
   SurfacesSet& available_surfaces = found_in_available->second;
-  FTL_DCHECK(available_surfaces.size() > 0);
+  FXL_DCHECK(available_surfaces.size() > 0);
   auto acquired_surface = std::move(available_surfaces.back());
   available_surfaces.pop_back();
   if (available_surfaces.size() == 0) {
@@ -62,6 +64,7 @@ VulkanSurfacePool::GetCachedOrCreateSurface(const SkISize& size) {
 void VulkanSurfacePool::SubmitSurface(
     std::unique_ptr<flow::SceneUpdateContext::SurfaceProducerSurface>
         p_surface) {
+  TRACE_EVENT0("flutter", "VulkanSurfacePool::SubmitSurface");
   if (!p_surface) {
     return;
   }
@@ -167,7 +170,7 @@ void VulkanSurfacePool::TraceStats() {
                 "SkiaCacheResources", skia_resources,             //
                 "SkiaCacheBytes", skia_bytes,                     //
                 "SkiaCachePurgeable", skia_cache_purgeable        //
-                );
+  );
 
   // Reset per present/frame stats.
   trace_surfaces_created_ = 0;

@@ -17,7 +17,8 @@ class TransformLayer : public ContainerLayer {
   void set_transform(const SkMatrix& transform) { transform_ = transform; }
 
   void Preroll(PrerollContext* context, const SkMatrix& matrix) override;
-  void Paint(PaintContext& context) override;
+
+  void Paint(PaintContext& context) const override;
 
 #if defined(OS_FUCHSIA)
   void UpdateScene(SceneUpdateContext& context) override;
@@ -26,7 +27,7 @@ class TransformLayer : public ContainerLayer {
  private:
   SkMatrix transform_;
 
-  FTL_DISALLOW_COPY_AND_ASSIGN(TransformLayer);
+  FXL_DISALLOW_COPY_AND_ASSIGN(TransformLayer);
 };
 
 }  // namespace flow

@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <string>
 
-#include "lib/ftl/macros.h"
+#include "lib/fxl/macros.h"
 
 #ifndef TRACE_EVENT_HIDE_MACROS
 
@@ -45,13 +45,13 @@
 #define TRACE_EVENT_INSTANT0(category_group, name) \
   ::fml::tracing::TraceEventInstant0(category_group, name);
 
-#define TRACE_FLOW_BEGIN(category, name, id, args...) \
+#define TRACE_FLOW_BEGIN(category, name, id) \
   ::fml::tracing::TraceEventFlowBegin0(category, name, id);
 
-#define TRACE_FLOW_STEP(category, name, id, args...) \
+#define TRACE_FLOW_STEP(category, name, id) \
   ::fml::tracing::TraceEventFlowStep0(category, name, id);
 
-#define TRACE_FLOW_END(category, name, id, args...) \
+#define TRACE_FLOW_END(category, name, id) \
   ::fml::tracing::TraceEventFlowEnd0(category, name, id);
 
 #endif  // TRACE_EVENT_HIDE_MACROS
@@ -115,7 +115,7 @@ class ScopedInstantEnd {
  private:
   const std::string label_;
 
-  FTL_DISALLOW_COPY_AND_ASSIGN(ScopedInstantEnd);
+  FXL_DISALLOW_COPY_AND_ASSIGN(ScopedInstantEnd);
 };
 
 }  // namespace tracing

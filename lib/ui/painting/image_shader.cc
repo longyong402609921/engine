@@ -4,9 +4,9 @@
 
 #include "flutter/lib/ui/painting/image_shader.h"
 
+#include "lib/tonic/converter/dart_converter.h"
 #include "lib/tonic/dart_args.h"
 #include "lib/tonic/dart_binding_macros.h"
-#include "lib/tonic/converter/dart_converter.h"
 #include "lib/tonic/dart_library_natives.h"
 
 using tonic::ToDart;
@@ -29,8 +29,8 @@ void ImageShader::RegisterNatives(tonic::DartLibraryNatives* natives) {
        FOR_EACH_BINDING(DART_REGISTER_NATIVE)});
 }
 
-ftl::RefPtr<ImageShader> ImageShader::Create() {
-  return ftl::MakeRefCounted<ImageShader>();
+fxl::RefPtr<ImageShader> ImageShader::Create() {
+  return fxl::MakeRefCounted<ImageShader>();
 }
 
 void ImageShader::initWithImage(CanvasImage* image,
@@ -38,7 +38,8 @@ void ImageShader::initWithImage(CanvasImage* image,
                                 SkShader::TileMode tmy,
                                 const tonic::Float64List& matrix4) {
   if (!image)
-    Dart_ThrowException(ToDart("ImageShader constructor called with non-genuine Image."));
+    Dart_ThrowException(
+        ToDart("ImageShader constructor called with non-genuine Image."));
   SkMatrix sk_matrix = ToSkMatrix(matrix4);
   set_shader(image->image()->makeShader(tmx, tmy, &sk_matrix));
 }

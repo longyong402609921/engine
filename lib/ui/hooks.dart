@@ -15,21 +15,54 @@ dynamic _decodeJSON(String message) {
 void _updateWindowMetrics(double devicePixelRatio,
                           double width,
                           double height,
-                          double top,
-                          double right,
-                          double bottom,
-                          double left) {
+                          double paddingTop,
+                          double paddingRight,
+                          double paddingBottom,
+                          double paddingLeft,
+                          double viewInsetTop,
+                          double viewInsetRight,
+                          double viewInsetBottom,
+                          double viewInsetLeft) {
   window
     .._devicePixelRatio = devicePixelRatio
     .._physicalSize = new Size(width, height)
     .._padding = new WindowPadding._(
-      top: top, right: right, bottom: bottom, left: left);
+        top: paddingTop,
+        right: paddingRight,
+        bottom: paddingBottom,
+        left: paddingLeft)
+    .._viewInsets = new WindowPadding._(
+        top: viewInsetTop,
+        right: viewInsetRight,
+        bottom: viewInsetBottom,
+        left: viewInsetLeft);
   _invoke(window.onMetricsChanged, window._onMetricsChangedZone);
 }
+
+typedef String LocaleClosure();
+
+String _localeClosure() => window._locale.toString();
+
+LocaleClosure _getLocaleClosure() => _localeClosure;
 
 void _updateLocale(String languageCode, String countryCode) {
   window._locale = new Locale(languageCode, countryCode);
   _invoke(window.onLocaleChanged, window._onLocaleChangedZone);
+}
+
+void _updateUserSettingsData(String json) {
+  final Map<String, dynamic> data = JSON.decode(json);
+  _updateTextScaleFactor(data['textScaleFactor'].toDouble());
+  _updateAlwaysUse24HourFormat(data['alwaysUse24HourFormat']);
+}
+
+void _updateTextScaleFactor(double textScaleFactor) {
+  window._textScaleFactor = textScaleFactor;
+  _invoke(window.onTextScaleFactorChanged, window._onTextScaleFactorChangedZone);
+}
+
+void _updateAlwaysUse24HourFormat(bool alwaysUse24HourFormat) {
+  window._alwaysUse24HourFormat = alwaysUse24HourFormat;
 }
 
 void _updateSemanticsEnabled(bool enabled) {
@@ -58,12 +91,13 @@ void _dispatchPointerDataPacket(ByteData packet) {
     _invoke1<PointerDataPacket>(window.onPointerDataPacket, window._onPointerDataPacketZone, _unpackPointerDataPacket(packet));
 }
 
-void _dispatchSemanticsAction(int id, int action) {
-  _invoke2<int, SemanticsAction>(
+void _dispatchSemanticsAction(int id, int action, ByteData args) {
+  _invoke3<int, SemanticsAction, ByteData>(
     window.onSemanticsAction,
     window._onSemanticsActionZone,
     id,
     SemanticsAction.values[action],
+    args,
   );
 }
 

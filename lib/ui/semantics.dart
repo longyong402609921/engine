@@ -18,6 +18,8 @@ class SemanticsAction {
   static const int _kIncreaseIndex = 1 << 6;
   static const int _kDecreaseIndex = 1 << 7;
   static const int _kShowOnScreen = 1 << 8;
+  static const int _kMoveCursorForwardByCharacter = 1 << 9;
+  static const int _kMoveCursorBackwardByCharacter = 1 << 10;
 
   /// The numerical value for this action.
   ///
@@ -76,6 +78,17 @@ class SemanticsAction {
   /// is partially off screen to bring it on screen.
   static const SemanticsAction showOnScreen = const SemanticsAction._(_kShowOnScreen);
 
+
+  /// Move the cursor forward by one character.
+  ///
+  /// This is for example used by the cursor control in text fields.
+  static const SemanticsAction moveCursorForwardByCharacter = const SemanticsAction._(_kMoveCursorForwardByCharacter);
+
+  /// Move the cursor backward by one character.
+  ///
+  /// This is for example used by the cursor control in text fields.
+  static const SemanticsAction moveCursorBackwardByCharacter = const SemanticsAction._(_kMoveCursorBackwardByCharacter);
+
   /// The possible semantics actions.
   ///
   /// The map's key is the [index] of the action and the value is the action
@@ -90,6 +103,8 @@ class SemanticsAction {
     _kIncreaseIndex: increase,
     _kDecreaseIndex: decrease,
     _kShowOnScreen: showOnScreen,
+    _kMoveCursorForwardByCharacter: moveCursorForwardByCharacter,
+    _kMoveCursorBackwardByCharacter: moveCursorBackwardByCharacter,
   };
 
   @override
@@ -113,6 +128,10 @@ class SemanticsAction {
         return 'SemanticsAction.decrease';
       case _kShowOnScreen:
         return 'SemanticsAction.showOnScreen';
+      case _kMoveCursorForwardByCharacter:
+        return 'SemanticsAction.moveCursorForwardByCharacter';
+      case _kMoveCursorBackwardByCharacter:
+        return 'SemanticsAction.moveCursorBackwardByCharacter';
     }
     return null;
   }
@@ -123,6 +142,9 @@ class SemanticsFlags {
   static const int _kHasCheckedStateIndex = 1 << 0;
   static const int _kIsCheckedIndex = 1 << 1;
   static const int _kIsSelectedIndex = 1 << 2;
+  static const int _kIsButtonIndex = 1 << 3;
+  static const int _kIsTextFieldIndex = 1 << 4;
+  static const int _kIsFocusedIndex = 1 << 5;
 
   const SemanticsFlags._(this.index);
 
@@ -153,6 +175,24 @@ class SemanticsFlags {
   /// For example, the active tab in a tab bar has [isSelected] set to true.
   static const SemanticsFlags isSelected = const SemanticsFlags._(_kIsSelectedIndex);
 
+  /// Whether the semantic node represents a button.
+  ///
+  /// Platforms has special handling for buttons, for example Android's TalkBack
+  /// and iOS's VoiceOver provides an additional hint when the focused object is
+  /// a button.
+  static const SemanticsFlags isButton = const SemanticsFlags._(_kIsButtonIndex);
+
+  /// Whether the semantic node represents a text field.
+  ///
+  /// Text fields are announced as such and allow text input via accessibility
+  /// affordances.
+  static const SemanticsFlags isTextField = const SemanticsFlags._(_kIsTextFieldIndex);
+
+  /// Whether the semantic node currently holds the user's focus.
+  ///
+  /// The focused element is usually the current receiver of keyboard inputs.
+  static const SemanticsFlags isFocused = const SemanticsFlags._(_kIsFocusedIndex);
+
   /// The possible semantics flags.
   ///
   /// The map's key is the [index] of the flag and the value is the flag itself.
@@ -160,6 +200,9 @@ class SemanticsFlags {
     _kHasCheckedStateIndex: hasCheckedState,
     _kIsCheckedIndex: isChecked,
     _kIsSelectedIndex: isSelected,
+    _kIsButtonIndex: isButton,
+    _kIsTextFieldIndex: isTextField,
+    _kIsFocusedIndex: isFocused,
   };
 
   @override
@@ -171,6 +214,12 @@ class SemanticsFlags {
         return 'SemanticsFlags.isChecked';
       case _kIsSelectedIndex:
         return 'SemanticsFlags.isSelected';
+      case _kIsButtonIndex:
+        return 'SemanticsFlags.isButton';
+      case _kIsTextFieldIndex:
+        return 'SemanticsFlags.isTextField';
+      case _kIsFocusedIndex:
+        return 'SemanticsFlags.isFocused';
     }
     return null;
   }
@@ -203,7 +252,13 @@ class SemanticsUpdateBuilder extends NativeFieldWrapperClass2 {
   /// asynchronously, the [Window.onSemanticsAction] callback might be called
   /// with an action that is no longer possible.
   ///
-  /// The `label` is a string that describes this node.
+  /// The `label` is a string that describes this node. The `value` property
+  /// describes the current value of the node as a string. The `increasedValue`
+  /// string will become the `value` string after a [SemanticsAction.increase]
+  /// action is performed. The `decreasedValue` string will become the `value`
+  /// string after a [SemanticsAction.decrease] action is performed. The `hint`
+  /// string describes what result an action performed on this node has. The
+  /// reading direction of all these strings is given by `textDirection`.
   ///
   /// The `rect` is the region occupied by this node in its own coordinate
   /// system.
@@ -216,6 +271,11 @@ class SemanticsUpdateBuilder extends NativeFieldWrapperClass2 {
     int actions,
     Rect rect,
     String label,
+    String hint,
+    String value,
+    String increasedValue,
+    String decreasedValue,
+    TextDirection textDirection,
     Float64List transform,
     Int32List children
   }) {
@@ -229,6 +289,11 @@ class SemanticsUpdateBuilder extends NativeFieldWrapperClass2 {
                 rect.right,
                 rect.bottom,
                 label,
+                hint,
+                value,
+                increasedValue,
+                decreasedValue,
+                textDirection != null ? textDirection.index + 1 : 0,
                 transform,
                 children);
   }
@@ -241,6 +306,11 @@ class SemanticsUpdateBuilder extends NativeFieldWrapperClass2 {
     double right,
     double bottom,
     String label,
+    String hint,
+    String value,
+    String increasedValue,
+    String decreasedValue,
+    int textDirection,
     Float64List transform,
     Int32List children
   ) native "SemanticsUpdateBuilder_updateNode";

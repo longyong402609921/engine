@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include "lib/ftl/macros.h"
+#include "lib/fxl/macros.h"
 
 namespace blink {
 
@@ -19,12 +19,12 @@ class DirectoryAssetBundle {
 
   bool GetAsBuffer(const std::string& asset_name, std::vector<uint8_t>* data);
 
- private:
   std::string GetPathForAsset(const std::string& asset_name);
 
+ private:
   const std::string directory_;
 
-  FTL_DISALLOW_COPY_AND_ASSIGN(DirectoryAssetBundle);
+  FXL_DISALLOW_COPY_AND_ASSIGN(DirectoryAssetBundle);
 };
 
 }  // namespace blink

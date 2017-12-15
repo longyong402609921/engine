@@ -18,6 +18,8 @@ template("flutter_content_handler") {
     libs = []
 
     sources = [
+      "accessibility_bridge.cc",
+      "accessibility_bridge.h",
       "app.cc",
       "app.h",
       "application_controller_impl.cc",
@@ -42,32 +44,33 @@ template("flutter_content_handler") {
     ]
 
     deps = [
-             "//application/lib/app",
-             "//application/lib/svc",
-             "//apps/icu_data/lib",
-             "//apps/mozart/lib/flutter/sdk_ext",
-             "//apps/mozart/lib/scene:client",
-             "//apps/mozart/services/input",
-             "//apps/mozart/services/views",
-             "//apps/tracing/lib/trace:provider",
-             "//dart/runtime/bin:libdart_builtin",
-             "//dart/runtime/platform:libdart_platform",
-             "//flutter/assets",
-             "//flutter/common",
-             "//flutter/flow",
-             "//flutter/glue",
-             "//flutter/lib/ui",
-             "//flutter/runtime",
-             "//flutter/sky/engine/platform",
-             "//flutter/vulkan",
-             "//lib/fidl/dart/sdk_ext",
-             "//lib/ftl",
-             "//lib/mtl",
-             "//lib/tonic",
-             "//lib/zip",
-             "//magma:vulkan",
+             "//third_party/dart/runtime/bin:libdart_builtin",
+             "//third_party/dart/runtime/platform:libdart_platform",
+             "$flutter_root/assets",
+             "$flutter_root/common",
+             "$flutter_root/flow",
+             "$flutter_root/glue",
+             "$flutter_root/lib/ui",
+             "$flutter_root/runtime",
+             "$flutter_root/sky/engine/platform",
+             "$flutter_root/vulkan",
+             "//garnet/public/lib/app/cpp",
+             "//garnet/public/lib/fsl",
+             "//garnet/public/lib/fxl",
+             "//garnet/public/lib/icu_data/cpp",
+             "//garnet/public/lib/svc/cpp",
+             "//garnet/public/lib/ui/input/fidl",
+             "//garnet/public/lib/ui/scenic:client",
+             "//garnet/public/lib/ui/views/fidl",
+             "//garnet/public/lib/vulkan",
+             "//garnet/public/lib/zip",
+             "//peridot/public/lib/context/fidl",
              "//third_party/rapidjson",
              "//third_party/skia",
+             "//topaz/lib/tonic",
+             "//topaz/public/dart-pkg/fuchsia",
+             "//topaz/public/lib/ui/flutter/sdk_ext",
+             "//zircon/system/ulib/trace-provider",
            ] + extra_deps
 
     # The flags below are needed so that Dart's CPU profiler can walk the
@@ -83,12 +86,12 @@ template("flutter_content_handler") {
   }
 }
 
-flutter_content_handler("content_handler") {
-  output_name = "flutter_runner"
-  extra_deps = [ "//dart/runtime:libdart_jit" ]
+flutter_content_handler("aot") {
+  output_name = "flutter_aot_runner"
+  extra_deps = [ "//third_party/dart/runtime:libdart_precompiled_runtime" ]
 }
 
-flutter_content_handler("aot_content_handler") {
-  output_name = "flutter_aot_runner"
-  extra_deps = [ "//dart/runtime:libdart_precompiled_runtime" ]
+flutter_content_handler("jit") {
+  output_name = "flutter_jit_runner"
+  extra_deps = [ "//third_party/dart/runtime:libdart_jit" ]
 }

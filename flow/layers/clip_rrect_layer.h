@@ -17,7 +17,8 @@ class ClipRRectLayer : public ContainerLayer {
   void set_clip_rrect(const SkRRect& clip_rrect) { clip_rrect_ = clip_rrect; }
 
   void Preroll(PrerollContext* context, const SkMatrix& matrix) override;
-  void Paint(PaintContext& context) override;
+
+  void Paint(PaintContext& context) const override;
 
 #if defined(OS_FUCHSIA)
   void UpdateScene(SceneUpdateContext& context) override;
@@ -26,7 +27,7 @@ class ClipRRectLayer : public ContainerLayer {
  private:
   SkRRect clip_rrect_;
 
-  FTL_DISALLOW_COPY_AND_ASSIGN(ClipRRectLayer);
+  FXL_DISALLOW_COPY_AND_ASSIGN(ClipRRectLayer);
 };
 
 }  // namespace flow

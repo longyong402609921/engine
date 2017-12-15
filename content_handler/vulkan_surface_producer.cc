@@ -3,9 +3,12 @@
 // found in the LICENSE file.
 
 #include "flutter/content_handler/vulkan_surface_producer.h"
+
 #include <memory>
 #include <string>
 #include <vector>
+#include "flutter/glue/trace_event.h"
+#include "third_party/skia/include/gpu/GrBackendSemaphore.h"
 #include "third_party/skia/include/gpu/GrContext.h"
 #include "third_party/skia/include/gpu/vk/GrVkTypes.h"
 #include "third_party/skia/src/gpu/vk/GrVkUtil.h"
@@ -13,32 +16,39 @@
 namespace flutter_runner {
 
 VulkanSurfaceProducer::VulkanSurfaceProducer(
-    mozart::client::Session* mozart_session) {
+    scenic_lib::Session* mozart_session) {
   valid_ = Initialize(mozart_session);
 
   if (valid_) {
-    FTL_LOG(INFO)
+    FXL_LOG(INFO)
         << "Flutter engine: Vulkan surface producer initialization: Successful";
   } else {
-    FTL_LOG(ERROR)
+    FXL_LOG(ERROR)
         << "Flutter engine: Vulkan surface producer initialization: Failed";
   }
 }
 
-VulkanSurfaceProducer::~VulkanSurfaceProducer() = default;
+VulkanSurfaceProducer::~VulkanSurfaceProducer() {
+  // Make sure queue is idle before we start destroying surfaces
+  VkResult wait_result =
+      VK_CALL_LOG_ERROR(vk_->QueueWaitIdle(backend_context_->fQueue));
+  FXL_DCHECK(wait_result == VK_SUCCESS);
+};
 
-bool VulkanSurfaceProducer::Initialize(
-    mozart::client::Session* mozart_session) {
-  vk_ = ftl::MakeRefCounted<vulkan::VulkanProcTable>();
+bool VulkanSurfaceProducer::Initialize(scenic_lib::Session* mozart_session) {
+  vk_ = fxl::MakeRefCounted<vulkan::VulkanProcTable>();
 
-  std::vector<std::string> extensions = {VK_KHR_SURFACE_EXTENSION_NAME};
+  std::vector<std::string> extensions = {
+      VK_KHR_SURFACE_EXTENSION_NAME,
+      VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME,
+  };
   application_ = std::make_unique<vulkan::VulkanApplication>(
       *vk_, "FlutterContentHandler", std::move(extensions));
 
   if (!application_->IsValid() || !vk_->AreInstanceProcsSetup()) {
     // Make certain the application instance was created and it setup the
     // instance proc table entries.
-    FTL_LOG(ERROR) << "Instance proc addresses have not been setup.";
+    FXL_LOG(ERROR) << "Instance proc addresses have not been setup.";
     return false;
   }
 
@@ -50,30 +60,30 @@ bool VulkanSurfaceProducer::Initialize(
       !vk_->AreDeviceProcsSetup()) {
     // Make certain the device was created and it setup the device proc table
     // entries.
-    FTL_LOG(ERROR) << "Device proc addresses have not been setup.";
+    FXL_LOG(ERROR) << "Device proc addresses have not been setup.";
     return false;
   }
 
   if (!vk_->HasAcquiredMandatoryProcAddresses()) {
-    FTL_LOG(ERROR) << "Failed to acquire mandatory proc addresses.";
+    FXL_LOG(ERROR) << "Failed to acquire mandatory proc addresses.";
     return false;
   }
 
   if (!vk_->IsValid()) {
-    FTL_LOG(ERROR) << "VulkanProcTable invalid";
+    FXL_LOG(ERROR) << "VulkanProcTable invalid";
     return false;
   }
 
   auto interface = vk_->CreateSkiaInterface();
 
   if (interface == nullptr || !interface->validate(0)) {
-    FTL_LOG(ERROR) << "Skia interface invalid.";
+    FXL_LOG(ERROR) << "Skia interface invalid.";
     return false;
   }
 
   uint32_t skia_features = 0;
   if (!logical_device_->GetPhysicalDeviceFeaturesSkia(&skia_features)) {
-    FTL_LOG(ERROR) << "Failed to get physical device features.";
+    FXL_LOG(ERROR) << "Failed to get physical device features.";
 
     return false;
   }
@@ -110,16 +120,20 @@ void VulkanSurfaceProducer::OnSurfacesPresented(
     std::vector<
         std::unique_ptr<flow::SceneUpdateContext::SurfaceProducerSurface>>
         surfaces) {
+  TRACE_EVENT0("flutter", "VulkanSurfaceProducer::OnSurfacesPresented");
+  std::vector<GrBackendSemaphore> semaphores;
+  semaphores.reserve(surfaces.size());
+  for (auto& surface : surfaces) {
+    auto vk_surface = static_cast<VulkanSurface*>(surface.get());
+    semaphores.push_back(vk_surface->GetAcquireSemaphore());
+  }
+
   // Do a single flush for all canvases derived from the context.
-  context_->flush();
-
-  // Do a CPU wait.
-  // TODO(chinmaygarde): Remove this once we have support for Vulkan semaphores.
-  VkResult wait_result =
-      VK_CALL_LOG_ERROR(vk_->QueueWaitIdle(backend_context_->fQueue));
-  FTL_DCHECK(wait_result == VK_SUCCESS);
-
-  // Submit surface, this signals acquire events sent along the session.
+  {
+    TRACE_EVENT0("flutter", "GrContext::flushAndSignalSemaphores");
+    context_->flushAndSignalSemaphores(semaphores.size(), semaphores.data());
+  }
+  // Submit surface
   for (auto& surface : surfaces) {
     SubmitSurface(std::move(surface));
   }
@@ -130,13 +144,13 @@ void VulkanSurfaceProducer::OnSurfacesPresented(
 
 std::unique_ptr<flow::SceneUpdateContext::SurfaceProducerSurface>
 VulkanSurfaceProducer::ProduceSurface(const SkISize& size) {
-  FTL_DCHECK(valid_);
+  FXL_DCHECK(valid_);
   return surface_pool_->AcquireSurface(size);
 }
 
 void VulkanSurfaceProducer::SubmitSurface(
     std::unique_ptr<flow::SceneUpdateContext::SurfaceProducerSurface> surface) {
-  FTL_DCHECK(valid_ && surface != nullptr);
+  FXL_DCHECK(valid_ && surface != nullptr);
   surface_pool_->SubmitSurface(std::move(surface));
 }
 

@@ -8,7 +8,7 @@
 #include "flutter/fml/platform/darwin/scoped_nsobject.h"
 #include "flutter/shell/common/platform_view.h"
 #include "flutter/shell/gpu/gpu_surface_gl.h"
-#include "lib/ftl/memory/weak_ptr.h"
+#include "lib/fxl/memory/weak_ptr.h"
 
 @class NSOpenGLView;
 @class NSOpenGLContext;
@@ -33,8 +33,6 @@ class PlatformViewMac : public PlatformView, public GPUSurfaceGLDelegate {
 
   intptr_t GLContextFBO() const override;
 
-  bool SurfaceSupportsSRGB() const override;
-
   VsyncWaiter* GetVsyncWaiter() override;
 
   bool ResourceContextMakeCurrent() override;
@@ -53,7 +51,7 @@ class PlatformViewMac : public PlatformView, public GPUSurfaceGLDelegate {
                               const std::string& main,
                               const std::string& packages);
 
-  FTL_DISALLOW_COPY_AND_ASSIGN(PlatformViewMac);
+  FXL_DISALLOW_COPY_AND_ASSIGN(PlatformViewMac);
 };
 
 }  // namespace shell

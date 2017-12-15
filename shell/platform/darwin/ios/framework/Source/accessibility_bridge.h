@@ -12,8 +12,9 @@
 
 #include "flutter/fml/platform/darwin/scoped_nsobject.h"
 #include "flutter/lib/ui/semantics/semantics_node.h"
+#include "flutter/shell/platform/darwin/ios/framework/Headers/FlutterChannels.h"
 #include "flutter/shell/platform/darwin/ios/framework/Source/FlutterView.h"
-#include "lib/ftl/macros.h"
+#include "lib/fxl/macros.h"
 #include "third_party/skia/include/core/SkMatrix44.h"
 #include "third_party/skia/include/core/SkRect.h"
 
@@ -55,14 +56,17 @@ class AccessibilityBridge final {
 
  private:
   SemanticsObject* GetOrCreateObject(int32_t id);
-  void VisitObjectsRecursivelyAndRemove(SemanticsObject* object, NSMutableArray<NSNumber*>* doomed_uids);
+  void VisitObjectsRecursivelyAndRemove(SemanticsObject* object,
+                                        NSMutableArray<NSNumber*>* doomed_uids);
   void ReleaseObjects(std::unordered_map<int, SemanticsObject*>& objects);
+  void HandleEvent(NSDictionary<NSString*, id>* annotatedEvent);
 
   UIView* view_;
   PlatformViewIOS* platform_view_;
   fml::scoped_nsobject<NSMutableDictionary<NSNumber*, SemanticsObject*>> objects_;
+  fml::scoped_nsprotocol<FlutterBasicMessageChannel*> accessibility_channel_;
 
-  FTL_DISALLOW_COPY_AND_ASSIGN(AccessibilityBridge);
+  FXL_DISALLOW_COPY_AND_ASSIGN(AccessibilityBridge);
 };
 
 }  // namespace shell

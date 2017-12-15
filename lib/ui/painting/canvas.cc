@@ -7,9 +7,9 @@
 #include <math.h>
 
 #include "flutter/flow/layers/physical_model_layer.h"
-#include "flutter/lib/ui/ui_dart_state.h"
 #include "flutter/lib/ui/painting/image.h"
 #include "flutter/lib/ui/painting/matrix.h"
+#include "flutter/lib/ui/ui_dart_state.h"
 #include "flutter/lib/ui/window/window.h"
 #include "lib/tonic/converter/dart_converter.h"
 #include "lib/tonic/dart_args.h"
@@ -69,15 +69,16 @@ void Canvas::RegisterNatives(tonic::DartLibraryNatives* natives) {
                      FOR_EACH_BINDING(DART_REGISTER_NATIVE)});
 }
 
-ftl::RefPtr<Canvas> Canvas::Create(PictureRecorder* recorder,
+fxl::RefPtr<Canvas> Canvas::Create(PictureRecorder* recorder,
                                    double left,
                                    double top,
                                    double right,
                                    double bottom) {
   if (!recorder)
-    Dart_ThrowException(ToDart("Canvas constructor called with non-genuine PictureRecorder."));
-  FTL_DCHECK(!recorder->isRecording()); // verified by Dart code
-  ftl::RefPtr<Canvas> canvas = ftl::MakeRefCounted<Canvas>(
+    Dart_ThrowException(
+        ToDart("Canvas constructor called with non-genuine PictureRecorder."));
+  FXL_DCHECK(!recorder->isRecording());  // verified by Dart code
+  fxl::RefPtr<Canvas> canvas = fxl::MakeRefCounted<Canvas>(
       recorder->BeginRecording(SkRect::MakeLTRB(left, top, right, bottom)));
   recorder->set_canvas(canvas);
   return canvas;
@@ -154,10 +155,14 @@ void Canvas::transform(const tonic::Float64List& matrix4) {
   canvas_->concat(ToSkMatrix(matrix4));
 }
 
-void Canvas::clipRect(double left, double top, double right, double bottom) {
+void Canvas::clipRect(double left,
+                      double top,
+                      double right,
+                      double bottom,
+                      SkClipOp clipOp) {
   if (!canvas_)
     return;
-  canvas_->clipRect(SkRect::MakeLTRB(left, top, right, bottom), SkClipOp::kIntersect, true);
+  canvas_->clipRect(SkRect::MakeLTRB(left, top, right, bottom), clipOp, true);
 }
 
 void Canvas::clipRRect(const RRect& rrect) {
@@ -170,7 +175,8 @@ void Canvas::clipPath(const CanvasPath* path) {
   if (!canvas_)
     return;
   if (!path)
-    Dart_ThrowException(ToDart("Canvas.clipPath called with non-genuine Path."));
+    Dart_ThrowException(
+        ToDart("Canvas.clipPath called with non-genuine Path."));
   canvas_->clipPath(path->path(), true);
 }
 
@@ -268,7 +274,8 @@ void Canvas::drawPath(const CanvasPath* path,
   if (!canvas_)
     return;
   if (!path)
-    Dart_ThrowException(ToDart("Canvas.drawPath called with non-genuine Path."));
+    Dart_ThrowException(
+        ToDart("Canvas.drawPath called with non-genuine Path."));
   canvas_->drawPath(path->path(), *paint.paint());
 }
 
@@ -280,7 +287,8 @@ void Canvas::drawImage(const CanvasImage* image,
   if (!canvas_)
     return;
   if (!image)
-    Dart_ThrowException(ToDart("Canvas.drawImage called with non-genuine Image."));
+    Dart_ThrowException(
+        ToDart("Canvas.drawImage called with non-genuine Image."));
   canvas_->drawImage(image->image(), x, y, paint.paint());
 }
 
@@ -298,7 +306,8 @@ void Canvas::drawImageRect(const CanvasImage* image,
   if (!canvas_)
     return;
   if (!image)
-    Dart_ThrowException(ToDart("Canvas.drawImageRect called with non-genuine Image."));
+    Dart_ThrowException(
+        ToDart("Canvas.drawImageRect called with non-genuine Image."));
   SkRect src = SkRect::MakeLTRB(src_left, src_top, src_right, src_bottom);
   SkRect dst = SkRect::MakeLTRB(dst_left, dst_top, dst_right, dst_bottom);
   canvas_->drawImageRect(image->image(), src, dst, paint.paint(),
@@ -319,7 +328,8 @@ void Canvas::drawImageNine(const CanvasImage* image,
   if (!canvas_)
     return;
   if (!image)
-    Dart_ThrowException(ToDart("Canvas.drawImageNine called with non-genuine Image."));
+    Dart_ThrowException(
+        ToDart("Canvas.drawImageNine called with non-genuine Image."));
   SkRect center =
       SkRect::MakeLTRB(center_left, center_top, center_right, center_bottom);
   SkIRect icenter;
@@ -332,7 +342,8 @@ void Canvas::drawPicture(Picture* picture) {
   if (!canvas_)
     return;
   if (!picture)
-    Dart_ThrowException(ToDart("Canvas.drawPicture called with non-genuine Picture."));
+    Dart_ThrowException(
+        ToDart("Canvas.drawPicture called with non-genuine Picture."));
   canvas_->drawPicture(picture->picture().get());
 }
 
@@ -359,11 +370,10 @@ void Canvas::drawVertices(const Vertices* vertices,
   if (!canvas_)
     return;
   if (!vertices)
-    Dart_ThrowException(ToDart("Canvas.drawVertices called with non-genuine Vertices."));
+    Dart_ThrowException(
+        ToDart("Canvas.drawVertices called with non-genuine Vertices."));
 
-  canvas_->drawVertices(vertices->vertices(),
-                        blend_mode,
-                        *paint.paint());
+  canvas_->drawVertices(vertices->vertices(), blend_mode, *paint.paint());
 }
 
 void Canvas::drawAtlas(const Paint& paint,
@@ -377,7 +387,9 @@ void Canvas::drawAtlas(const Paint& paint,
   if (!canvas_)
     return;
   if (!atlas)
-    Dart_ThrowException(ToDart("Canvas.drawAtlas or Canvas.drawRawAtlas called with non-genuine Image."));
+    Dart_ThrowException(
+        ToDart("Canvas.drawAtlas or Canvas.drawRawAtlas called with "
+               "non-genuine Image."));
 
   sk_sp<SkImage> skImage = atlas->image();
 
@@ -400,14 +412,12 @@ void Canvas::drawShadow(const CanvasPath* path,
                         double elevation,
                         bool transparentOccluder) {
   if (!path)
-    Dart_ThrowException(ToDart("Canvas.drawShader called with non-genuine Path."));
-  SkScalar dpr = UIDartState::Current()->window()->viewport_metrics().device_pixel_ratio;
-  flow::PhysicalModelLayer::DrawShadow(canvas_,
-                                       path->path(),
-                                       color,
-                                       elevation,
-                                       transparentOccluder,
-                                       dpr);
+    Dart_ThrowException(
+        ToDart("Canvas.drawShader called with non-genuine Path."));
+  SkScalar dpr =
+      UIDartState::Current()->window()->viewport_metrics().device_pixel_ratio;
+  flow::PhysicalModelLayer::DrawShadow(canvas_, path->path(), color, elevation,
+                                       transparentOccluder, dpr);
 }
 
 void Canvas::Clear() {

@@ -22,12 +22,12 @@ void ClipRectLayer::Preroll(PrerollContext* context, const SkMatrix& matrix) {
 #if defined(OS_FUCHSIA)
 
 void ClipRectLayer::UpdateScene(SceneUpdateContext& context) {
-  FTL_DCHECK(needs_system_composite());
+  FXL_DCHECK(needs_system_composite());
 
-  mozart::client::Rectangle shape(context.session(),   // session
-                                  clip_rect_.width(),  //  width
-                                  clip_rect_.height()  //  height
-                                  );
+  scenic_lib::Rectangle shape(context.session(),   // session
+                              clip_rect_.width(),  //  width
+                              clip_rect_.height()  //  height
+  );
 
   SceneUpdateContext::Clip clip(context, shape, clip_rect_);
   UpdateSceneChildren(context);
@@ -35,9 +35,9 @@ void ClipRectLayer::UpdateScene(SceneUpdateContext& context) {
 
 #endif  // defined(OS_FUCHSIA)
 
-void ClipRectLayer::Paint(PaintContext& context) {
+void ClipRectLayer::Paint(PaintContext& context) const {
   TRACE_EVENT0("flutter", "ClipRectLayer::Paint");
-  FTL_DCHECK(needs_painting());
+  FXL_DCHECK(needs_painting());
 
   SkAutoCanvasRestore save(&context.canvas, true);
   context.canvas.clipRect(paint_bounds());

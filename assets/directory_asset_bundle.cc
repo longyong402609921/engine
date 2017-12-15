@@ -3,16 +3,20 @@
 // found in the LICENSE file.
 
 #include "flutter/assets/directory_asset_bundle.h"
+#include "lib/fxl/build_config.h"
 
 #include <fcntl.h>
+
+#if !defined(OS_WIN)
 #include <unistd.h>
+#endif
 
 #include <utility>
 
-#include "lib/ftl/files/eintr_wrapper.h"
-#include "lib/ftl/files/file.h"
-#include "lib/ftl/files/path.h"
-#include "lib/ftl/files/unique_fd.h"
+#include "lib/fxl/files/eintr_wrapper.h"
+#include "lib/fxl/files/file.h"
+#include "lib/fxl/files/path.h"
+#include "lib/fxl/files/unique_fd.h"
 
 namespace blink {
 
@@ -33,7 +37,7 @@ std::string DirectoryAssetBundle::GetPathForAsset(
     const std::string& asset_name) {
   std::string asset_path = files::SimplifyPath(directory_ + "/" + asset_name);
   if (asset_path.find(directory_) != 0u) {
-    FTL_LOG(ERROR) << "Asset name '" << asset_name
+    FXL_LOG(ERROR) << "Asset name '" << asset_name
                    << "' attempted to traverse outside asset bundle.";
     return std::string();
   }
