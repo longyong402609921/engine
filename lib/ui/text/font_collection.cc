@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,56 +6,84 @@
 
 #include <mutex>
 
+#include "flutter/lib/ui/text/asset_manager_font_provider.h"
+#include "flutter/lib/ui/ui_dart_state.h"
+#include "flutter/lib/ui/window/window.h"
 #include "flutter/runtime/test_font_data.h"
-#include "third_party/rapidjson/rapidjson/document.h"
-#include "third_party/rapidjson/rapidjson/rapidjson.h"
+#include "rapidjson/document.h"
+#include "rapidjson/rapidjson.h"
+#include "third_party/skia/include/core/SkFontMgr.h"
+#include "third_party/skia/include/core/SkGraphics.h"
 #include "third_party/skia/include/core/SkStream.h"
-#include "third_party/skia/include/ports/SkFontMgr.h"
+#include "third_party/skia/include/core/SkTypeface.h"
+#include "third_party/tonic/dart_args.h"
+#include "third_party/tonic/dart_library_natives.h"
+#include "third_party/tonic/logging/dart_invoke.h"
+#include "third_party/tonic/typed_data/typed_list.h"
 #include "txt/asset_font_manager.h"
 #include "txt/test_font_manager.h"
 
-namespace blink {
+namespace flutter {
 
-FontCollection& FontCollection::ForProcess() {
-  static std::once_flag once = {};
-  static FontCollection* gCollection = nullptr;
-  std::call_once(once, []() { gCollection = new FontCollection(); });
-  return *gCollection;
+namespace {
+
+void LoadFontFromList(tonic::Uint8List& font_data,
+                      Dart_Handle callback,
+                      std::string family_name) {
+  FontCollection& font_collection =
+      UIDartState::Current()->window()->client()->GetFontCollection();
+  font_collection.LoadFontFromList(font_data.data(), font_data.num_elements(),
+                                   family_name);
+  font_data.Release();
+  tonic::DartInvoke(callback, {tonic::ToDart(0)});
 }
+
+void _LoadFontFromList(Dart_NativeArguments args) {
+  tonic::DartCallStatic(LoadFontFromList, args);
+}
+
+}  // namespace
 
 FontCollection::FontCollection()
     : collection_(std::make_shared<txt::FontCollection>()) {
-  collection_->PushBack(SkFontMgr::RefDefault());
+  collection_->SetupDefaultFontManager();
+
+  dynamic_font_manager_ = sk_make_sp<txt::DynamicFontManager>();
+  collection_->SetDynamicFontManager(dynamic_font_manager_);
 }
 
-FontCollection::~FontCollection() = default;
+FontCollection::~FontCollection() {
+  collection_.reset();
+  SkGraphics::PurgeFontCache();
+}
+
+void FontCollection::RegisterNatives(tonic::DartLibraryNatives* natives) {
+  natives->Register({
+      {"loadFontFromList", _LoadFontFromList, 3, true},
+  });
+}
 
 std::shared_ptr<txt::FontCollection> FontCollection::GetFontCollection() const {
   return collection_;
 }
 
-void FontCollection::RegisterFontsFromAssetStore(
-    fxl::RefPtr<blink::ZipAssetStore> asset_store) {
-  if (!asset_store) {
-    return;
-  }
-
-  std::vector<uint8_t> manifest_data;
-  if (!asset_store->GetAsBuffer("FontManifest.json", &manifest_data)) {
-    FXL_DLOG(WARNING) << "Could not find the font manifest in the asset store.";
+void FontCollection::RegisterFonts(
+    std::shared_ptr<AssetManager> asset_manager) {
+  std::unique_ptr<fml::Mapping> manifest_mapping =
+      asset_manager->GetAsMapping("FontManifest.json");
+  if (manifest_mapping == nullptr) {
+    FML_DLOG(WARNING) << "Could not find the font manifest in the asset store.";
     return;
   }
 
   rapidjson::Document document;
-  static_assert(sizeof(decltype(manifest_data)::value_type) ==
-                    sizeof(decltype(document)::Ch),
-                "");
-  document.Parse(
-      reinterpret_cast<decltype(document)::Ch*>(manifest_data.data()),
-      manifest_data.size());
+  static_assert(sizeof(decltype(document)::Ch) == sizeof(uint8_t), "");
+  document.Parse(reinterpret_cast<const decltype(document)::Ch*>(
+                     manifest_mapping->GetMapping()),
+                 manifest_mapping->GetSize());
 
   if (document.HasParseError()) {
-    FXL_DLOG(WARNING) << "Error parsing the font manifest in the asset store.";
+    FML_DLOG(WARNING) << "Error parsing the font manifest in the asset store.";
     return;
   }
 
@@ -65,7 +93,8 @@ void FontCollection::RegisterFontsFromAssetStore(
     return;
   }
 
-  auto font_asset_data_provider = std::make_unique<txt::AssetDataProvider>();
+  auto font_provider =
+      std::make_unique<AssetManagerFontProvider>(asset_manager);
 
   for (const auto& family : document.GetArray()) {
     auto family_name = family.FindMember("family");
@@ -90,36 +119,46 @@ void FontCollection::RegisterFontsFromAssetStore(
       }
 
       // TODO: Handle weights and styles.
-      std::vector<uint8_t> font_data;
-      if (asset_store->GetAsBuffer(font_asset->value.GetString(), &font_data)) {
-        // The data must be copied because it needs to be moved into the
-        // typeface as a stream.
-        auto data =
-            SkMemoryStream::MakeCopy(font_data.data(), font_data.size());
-        // Ownership of the stream is transferred.
-        auto typeface = SkTypeface::MakeFromStream(data.release());
-        font_asset_data_provider->RegisterTypeface(
-            std::move(typeface), family_name->value.GetString());
-      }
+      font_provider->RegisterAsset(family_name->value.GetString(),
+                                   font_asset->value.GetString());
     }
   }
 
-  collection_->PushFront(
-      sk_make_sp<txt::AssetFontManager>(std::move(font_asset_data_provider)));
+  collection_->SetAssetFontManager(
+      sk_make_sp<txt::AssetFontManager>(std::move(font_provider)));
 }
 
 void FontCollection::RegisterTestFonts() {
   sk_sp<SkTypeface> test_typeface =
-      SkTypeface::MakeFromStream(GetTestFontData().release());
+      SkTypeface::MakeFromStream(GetTestFontData());
 
-  std::unique_ptr<txt::AssetDataProvider> asset_data_provider =
-      std::make_unique<txt::AssetDataProvider>();
+  std::unique_ptr<txt::TypefaceFontAssetProvider> font_provider =
+      std::make_unique<txt::TypefaceFontAssetProvider>();
 
-  asset_data_provider->RegisterTypeface(std::move(test_typeface),
-                                        GetTestFontFamilyName());
+  font_provider->RegisterTypeface(std::move(test_typeface),
+                                  GetTestFontFamilyName());
 
-  collection_->PushFront(sk_make_sp<txt::TestFontManager>(
-      std::move(asset_data_provider), GetTestFontFamilyName()));
+  collection_->SetTestFontManager(sk_make_sp<txt::TestFontManager>(
+      std::move(font_provider), GetTestFontFamilyName()));
+
+  collection_->DisableFontFallback();
 }
 
-}  // namespace blink
+void FontCollection::LoadFontFromList(const uint8_t* font_data,
+                                      int length,
+                                      std::string family_name) {
+  std::unique_ptr<SkStreamAsset> font_stream =
+      std::make_unique<SkMemoryStream>(font_data, length, true);
+  sk_sp<SkTypeface> typeface =
+      SkTypeface::MakeFromStream(std::move(font_stream));
+  txt::TypefaceFontAssetProvider& font_provider =
+      dynamic_font_manager_->font_provider();
+  if (family_name.empty()) {
+    font_provider.RegisterTypeface(typeface);
+  } else {
+    font_provider.RegisterTypeface(typeface, family_name);
+  }
+  collection_->ClearFontFamilyCache();
+}
+
+}  // namespace flutter

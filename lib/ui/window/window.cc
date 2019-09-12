@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,42 +7,20 @@
 #include "flutter/lib/ui/compositing/scene.h"
 #include "flutter/lib/ui/ui_dart_state.h"
 #include "flutter/lib/ui/window/platform_message_response_dart.h"
-#include "lib/tonic/converter/dart_converter.h"
-#include "lib/tonic/dart_args.h"
-#include "lib/tonic/dart_library_natives.h"
-#include "lib/tonic/dart_microtask_queue.h"
-#include "lib/tonic/logging/dart_invoke.h"
-#include "lib/tonic/typed_data/dart_byte_data.h"
+#include "third_party/tonic/converter/dart_converter.h"
+#include "third_party/tonic/dart_args.h"
+#include "third_party/tonic/dart_library_natives.h"
+#include "third_party/tonic/dart_microtask_queue.h"
+#include "third_party/tonic/logging/dart_invoke.h"
+#include "third_party/tonic/typed_data/dart_byte_data.h"
 
-using tonic::DartInvokeField;
-using tonic::DartState;
-using tonic::StdStringToDart;
-using tonic::ToDart;
-
-namespace blink {
+namespace flutter {
 namespace {
-
-Dart_Handle ToByteData(const std::vector<uint8_t>& buffer) {
-  Dart_Handle data_handle =
-      Dart_NewTypedData(Dart_TypedData_kByteData, buffer.size());
-  if (Dart_IsError(data_handle))
-    return data_handle;
-
-  Dart_TypedData_Type type;
-  void* data = nullptr;
-  intptr_t num_bytes = 0;
-  FXL_CHECK(!Dart_IsError(
-      Dart_TypedDataAcquireData(data_handle, &type, &data, &num_bytes)));
-
-  memcpy(data, buffer.data(), num_bytes);
-  Dart_TypedDataReleaseData(data_handle);
-  return data_handle;
-}
 
 void DefaultRouteName(Dart_NativeArguments args) {
   std::string routeName =
       UIDartState::Current()->window()->client()->DefaultRouteName();
-  Dart_SetReturnValue(args, StdStringToDart(routeName));
+  Dart_SetReturnValue(args, tonic::StdStringToDart(routeName));
 }
 
 void ScheduleFrame(Dart_NativeArguments args) {
@@ -71,28 +49,74 @@ void UpdateSemantics(Dart_NativeArguments args) {
   UIDartState::Current()->window()->client()->UpdateSemantics(update);
 }
 
-void SendPlatformMessage(Dart_Handle window,
-                         const std::string& name,
-                         Dart_Handle callback,
-                         const tonic::DartByteData& data) {
+void SetIsolateDebugName(Dart_NativeArguments args) {
+  Dart_Handle exception = nullptr;
+  const std::string name =
+      tonic::DartConverter<std::string>::FromArguments(args, 1, exception);
+  if (exception) {
+    Dart_ThrowException(exception);
+    return;
+  }
+  UIDartState::Current()->SetDebugName(name);
+}
+
+void SetNeedsReportTimings(Dart_NativeArguments args) {
+  Dart_Handle exception = nullptr;
+  bool value = tonic::DartConverter<bool>::FromArguments(args, 1, exception);
+  UIDartState::Current()->window()->client()->SetNeedsReportTimings(value);
+}
+
+void ReportUnhandledException(Dart_NativeArguments args) {
+  Dart_Handle exception = nullptr;
+
+  auto error_name =
+      tonic::DartConverter<std::string>::FromArguments(args, 0, exception);
+  if (exception) {
+    Dart_ThrowException(exception);
+    return;
+  }
+
+  auto stack_trace =
+      tonic::DartConverter<std::string>::FromArguments(args, 1, exception);
+  if (exception) {
+    Dart_ThrowException(exception);
+    return;
+  }
+
+  UIDartState::Current()->ReportUnhandledException(std::move(error_name),
+                                                   std::move(stack_trace));
+}
+
+Dart_Handle SendPlatformMessage(Dart_Handle window,
+                                const std::string& name,
+                                Dart_Handle callback,
+                                Dart_Handle data_handle) {
   UIDartState* dart_state = UIDartState::Current();
 
-  fxl::RefPtr<PlatformMessageResponse> response;
-  if (!Dart_IsNull(callback)) {
-    response = fxl::MakeRefCounted<PlatformMessageResponseDart>(
-        tonic::DartPersistentValue(dart_state, callback));
+  if (!dart_state->window()) {
+    return tonic::ToDart(
+        "Platform messages can only be sent from the main isolate");
   }
-  if (Dart_IsNull(data.dart_handle())) {
-    UIDartState::Current()->window()->client()->HandlePlatformMessage(
-        fxl::MakeRefCounted<PlatformMessage>(name, response));
-  } else {
-    const uint8_t* buffer = static_cast<const uint8_t*>(data.data());
 
-    UIDartState::Current()->window()->client()->HandlePlatformMessage(
-        fxl::MakeRefCounted<PlatformMessage>(
+  fml::RefPtr<PlatformMessageResponse> response;
+  if (!Dart_IsNull(callback)) {
+    response = fml::MakeRefCounted<PlatformMessageResponseDart>(
+        tonic::DartPersistentValue(dart_state, callback),
+        dart_state->GetTaskRunners().GetUITaskRunner());
+  }
+  if (Dart_IsNull(data_handle)) {
+    dart_state->window()->client()->HandlePlatformMessage(
+        fml::MakeRefCounted<PlatformMessage>(name, response));
+  } else {
+    tonic::DartByteData data(data_handle);
+    const uint8_t* buffer = static_cast<const uint8_t*>(data.data());
+    dart_state->window()->client()->HandlePlatformMessage(
+        fml::MakeRefCounted<PlatformMessage>(
             name, std::vector<uint8_t>(buffer, buffer + data.length_in_bytes()),
             response));
   }
+
+  return Dart_Null();
 }
 
 void _SendPlatformMessage(Dart_NativeArguments args) {
@@ -106,6 +130,7 @@ void RespondToPlatformMessage(Dart_Handle window,
     UIDartState::Current()->window()->CompletePlatformMessageEmptyResponse(
         response_id);
   } else {
+    // TODO(engine): Avoid this copy.
     const uint8_t* buffer = static_cast<const uint8_t*>(data.data());
     UIDartState::Current()->window()->CompletePlatformMessageResponse(
         response_id,
@@ -119,6 +144,23 @@ void _RespondToPlatformMessage(Dart_NativeArguments args) {
 
 }  // namespace
 
+Dart_Handle ToByteData(const std::vector<uint8_t>& buffer) {
+  Dart_Handle data_handle =
+      Dart_NewTypedData(Dart_TypedData_kByteData, buffer.size());
+  if (Dart_IsError(data_handle))
+    return data_handle;
+
+  Dart_TypedData_Type type;
+  void* data = nullptr;
+  intptr_t num_bytes = 0;
+  FML_CHECK(!Dart_IsError(
+      Dart_TypedDataAcquireData(data_handle, &type, &data, &num_bytes)));
+
+  memcpy(data, buffer.data(), num_bytes);
+  Dart_TypedDataReleaseData(data_handle);
+  return data_handle;
+}
+
 WindowClient::~WindowClient() {}
 
 Window::Window(WindowClient* client) : client_(client) {}
@@ -126,78 +168,114 @@ Window::Window(WindowClient* client) : client_(client) {}
 Window::~Window() {}
 
 void Window::DidCreateIsolate() {
-  library_.Set(DartState::Current(), Dart_LookupLibrary(ToDart("dart:ui")));
+  library_.Set(tonic::DartState::Current(),
+               Dart_LookupLibrary(tonic::ToDart("dart:ui")));
 }
 
 void Window::UpdateWindowMetrics(const ViewportMetrics& metrics) {
   viewport_metrics_ = metrics;
 
-  tonic::DartState* dart_state = library_.dart_state().get();
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
   if (!dart_state)
     return;
   tonic::DartState::Scope scope(dart_state);
-  DartInvokeField(
+  tonic::LogIfError(tonic::DartInvokeField(
       library_.value(), "_updateWindowMetrics",
       {
-          ToDart(metrics.device_pixel_ratio),
-          ToDart(static_cast<double>(metrics.physical_width)),
-          ToDart(static_cast<double>(metrics.physical_height)),
-          ToDart(static_cast<double>(metrics.physical_padding_top)),
-          ToDart(static_cast<double>(metrics.physical_padding_right)),
-          ToDart(static_cast<double>(metrics.physical_padding_bottom)),
-          ToDart(static_cast<double>(metrics.physical_padding_left)),
-          ToDart(static_cast<double>(metrics.physical_view_inset_top)),
-          ToDart(static_cast<double>(metrics.physical_view_inset_right)),
-          ToDart(static_cast<double>(metrics.physical_view_inset_bottom)),
-          ToDart(static_cast<double>(metrics.physical_view_inset_left)),
-      });
+          tonic::ToDart(metrics.device_pixel_ratio),
+          tonic::ToDart(metrics.physical_width),
+          tonic::ToDart(metrics.physical_height),
+          tonic::ToDart(metrics.physical_depth),
+          tonic::ToDart(metrics.physical_padding_top),
+          tonic::ToDart(metrics.physical_padding_right),
+          tonic::ToDart(metrics.physical_padding_bottom),
+          tonic::ToDart(metrics.physical_padding_left),
+          tonic::ToDart(metrics.physical_view_inset_top),
+          tonic::ToDart(metrics.physical_view_inset_right),
+          tonic::ToDart(metrics.physical_view_inset_bottom),
+          tonic::ToDart(metrics.physical_view_inset_left),
+          tonic::ToDart(metrics.physical_system_gesture_inset_top),
+          tonic::ToDart(metrics.physical_system_gesture_inset_right),
+          tonic::ToDart(metrics.physical_system_gesture_inset_bottom),
+          tonic::ToDart(metrics.physical_system_gesture_inset_left),
+      }));
 }
 
-void Window::UpdateLocale(const std::string& language_code,
-                          const std::string& country_code) {
-  tonic::DartState* dart_state = library_.dart_state().get();
+void Window::UpdateLocales(const std::vector<std::string>& locales) {
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
   if (!dart_state)
     return;
   tonic::DartState::Scope scope(dart_state);
-
-  DartInvokeField(library_.value(), "_updateLocale",
-                  {
-                      StdStringToDart(language_code),
-                      StdStringToDart(country_code),
-                  });
+  tonic::LogIfError(tonic::DartInvokeField(
+      library_.value(), "_updateLocales",
+      {
+          tonic::ToDart<std::vector<std::string>>(locales),
+      }));
 }
 
 void Window::UpdateUserSettingsData(const std::string& data) {
-  tonic::DartState* dart_state = library_.dart_state().get();
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
   if (!dart_state)
     return;
   tonic::DartState::Scope scope(dart_state);
 
-  DartInvokeField(library_.value(), "_updateUserSettingsData",
-                  {
-                      StdStringToDart(data),
-                  });
+  tonic::LogIfError(tonic::DartInvokeField(library_.value(),
+                                           "_updateUserSettingsData",
+                                           {
+                                               tonic::StdStringToDart(data),
+                                           }));
+}
+
+void Window::UpdateLifecycleState(const std::string& data) {
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
+  if (!dart_state)
+    return;
+  tonic::DartState::Scope scope(dart_state);
+  tonic::LogIfError(tonic::DartInvokeField(library_.value(),
+                                           "_updateLifecycleState",
+                                           {
+                                               tonic::StdStringToDart(data),
+                                           }));
 }
 
 void Window::UpdateSemanticsEnabled(bool enabled) {
-  tonic::DartState* dart_state = library_.dart_state().get();
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
   if (!dart_state)
     return;
   tonic::DartState::Scope scope(dart_state);
 
-  DartInvokeField(library_.value(), "_updateSemanticsEnabled",
-                  {ToDart(enabled)});
+  tonic::LogIfError(tonic::DartInvokeField(
+      library_.value(), "_updateSemanticsEnabled", {tonic::ToDart(enabled)}));
 }
 
-void Window::DispatchPlatformMessage(fxl::RefPtr<PlatformMessage> message) {
-  tonic::DartState* dart_state = library_.dart_state().get();
+void Window::UpdateAccessibilityFeatures(int32_t values) {
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
   if (!dart_state)
     return;
+  tonic::DartState::Scope scope(dart_state);
+
+  tonic::LogIfError(tonic::DartInvokeField(library_.value(),
+                                           "_updateAccessibilityFeatures",
+                                           {tonic::ToDart(values)}));
+}
+
+void Window::DispatchPlatformMessage(fml::RefPtr<PlatformMessage> message) {
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
+  if (!dart_state) {
+    FML_DLOG(WARNING)
+        << "Dropping platform message for lack of DartState on channel: "
+        << message->channel();
+    return;
+  }
   tonic::DartState::Scope scope(dart_state);
   Dart_Handle data_handle =
       (message->hasData()) ? ToByteData(message->data()) : Dart_Null();
-  if (Dart_IsError(data_handle))
+  if (Dart_IsError(data_handle)) {
+    FML_DLOG(WARNING)
+        << "Dropping platform message because of a Dart error on channel: "
+        << message->channel();
     return;
+  }
 
   int response_id = 0;
   if (auto response = message->response()) {
@@ -205,13 +283,14 @@ void Window::DispatchPlatformMessage(fxl::RefPtr<PlatformMessage> message) {
     pending_responses_[response_id] = response;
   }
 
-  DartInvokeField(
-      library_.value(), "_dispatchPlatformMessage",
-      {ToDart(message->channel()), data_handle, ToDart(response_id)});
+  tonic::LogIfError(
+      tonic::DartInvokeField(library_.value(), "_dispatchPlatformMessage",
+                             {tonic::ToDart(message->channel()), data_handle,
+                              tonic::ToDart(response_id)}));
 }
 
 void Window::DispatchPointerDataPacket(const PointerDataPacket& packet) {
-  tonic::DartState* dart_state = library_.dart_state().get();
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
   if (!dart_state)
     return;
   tonic::DartState::Scope scope(dart_state);
@@ -219,14 +298,14 @@ void Window::DispatchPointerDataPacket(const PointerDataPacket& packet) {
   Dart_Handle data_handle = ToByteData(packet.data());
   if (Dart_IsError(data_handle))
     return;
-  DartInvokeField(library_.value(), "_dispatchPointerDataPacket",
-                  {data_handle});
+  tonic::LogIfError(tonic::DartInvokeField(
+      library_.value(), "_dispatchPointerDataPacket", {data_handle}));
 }
 
 void Window::DispatchSemanticsAction(int32_t id,
                                      SemanticsAction action,
                                      std::vector<uint8_t> args) {
-  tonic::DartState* dart_state = library_.dart_state().get();
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
   if (!dart_state)
     return;
   tonic::DartState::Scope scope(dart_state);
@@ -236,27 +315,53 @@ void Window::DispatchSemanticsAction(int32_t id,
   if (Dart_IsError(args_handle))
     return;
 
-  DartInvokeField(
+  tonic::LogIfError(tonic::DartInvokeField(
       library_.value(), "_dispatchSemanticsAction",
-      {ToDart(id), ToDart(static_cast<int32_t>(action)), args_handle});
+      {tonic::ToDart(id), tonic::ToDart(static_cast<int32_t>(action)),
+       args_handle}));
 }
 
-void Window::BeginFrame(fxl::TimePoint frameTime) {
-  tonic::DartState* dart_state = library_.dart_state().get();
+void Window::BeginFrame(fml::TimePoint frameTime) {
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
   if (!dart_state)
     return;
   tonic::DartState::Scope scope(dart_state);
 
-  int64_t microseconds = (frameTime - fxl::TimePoint()).ToMicroseconds();
+  int64_t microseconds = (frameTime - fml::TimePoint()).ToMicroseconds();
 
-  DartInvokeField(library_.value(), "_beginFrame",
-                  {
-                      Dart_NewInteger(microseconds),
-                  });
+  tonic::LogIfError(tonic::DartInvokeField(library_.value(), "_beginFrame",
+                                           {
+                                               Dart_NewInteger(microseconds),
+                                           }));
 
-  tonic::DartMicrotaskQueue::GetForCurrentThread()->RunMicrotasks();
+  UIDartState::Current()->FlushMicrotasksNow();
 
-  DartInvokeField(library_.value(), "_drawFrame", {});
+  tonic::LogIfError(tonic::DartInvokeField(library_.value(), "_drawFrame", {}));
+}
+
+void Window::ReportTimings(std::vector<int64_t> timings) {
+  std::shared_ptr<tonic::DartState> dart_state = library_.dart_state().lock();
+  if (!dart_state)
+    return;
+  tonic::DartState::Scope scope(dart_state);
+
+  Dart_Handle data_handle =
+      Dart_NewTypedData(Dart_TypedData_kInt64, timings.size());
+
+  Dart_TypedData_Type type;
+  void* data = nullptr;
+  intptr_t num_acquired = 0;
+  FML_CHECK(!Dart_IsError(
+      Dart_TypedDataAcquireData(data_handle, &type, &data, &num_acquired)));
+  FML_DCHECK(num_acquired == static_cast<int>(timings.size()));
+
+  memcpy(data, timings.data(), sizeof(int64_t) * timings.size());
+  FML_CHECK(Dart_TypedDataReleaseData(data_handle));
+
+  tonic::LogIfError(tonic::DartInvokeField(library_.value(), "_reportTimings",
+                                           {
+                                               data_handle,
+                                           }));
 }
 
 void Window::CompletePlatformMessageEmptyResponse(int response_id) {
@@ -279,7 +384,7 @@ void Window::CompletePlatformMessageResponse(int response_id,
     return;
   auto response = std::move(it->second);
   pending_responses_.erase(it);
-  response->Complete(std::move(data));
+  response->Complete(std::make_unique<fml::DataMapping>(std::move(data)));
 }
 
 void Window::RegisterNatives(tonic::DartLibraryNatives* natives) {
@@ -290,7 +395,10 @@ void Window::RegisterNatives(tonic::DartLibraryNatives* natives) {
       {"Window_respondToPlatformMessage", _RespondToPlatformMessage, 3, true},
       {"Window_render", Render, 2, true},
       {"Window_updateSemantics", UpdateSemantics, 2, true},
+      {"Window_setIsolateDebugName", SetIsolateDebugName, 2, true},
+      {"Window_reportUnhandledException", ReportUnhandledException, 2, true},
+      {"Window_setNeedsReportTimings", SetNeedsReportTimings, 2, true},
   });
 }
 
-}  // namespace blink
+}  // namespace flutter

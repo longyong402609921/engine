@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
+#include "flutter/fml/command_line.h"
+#include "flutter/fml/logging.h"
 #include "gtest/gtest.h"
-#include "lib/fxl/command_line.h"
-#include "lib/fxl/logging.h"
 #include "txt/font_collection.h"
-#include "utils.h"
+#include "txt_test_utils.h"
 
 namespace txt {
 

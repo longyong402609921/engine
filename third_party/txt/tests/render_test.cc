@@ -18,21 +18,17 @@
 
 #include <string>
 
-#include "lib/fxl/logging.h"
+#include "flutter/fml/logging.h"
 #include "third_party/skia/include/core/SkImageEncoder.h"
 #include "third_party/skia/include/core/SkStream.h"
 #include "txt/asset_font_manager.h"
-#include "txt/directory_asset_data_provider.h"
 #include "txt/font_collection.h"
-#include "utils.h"
+#include "txt_test_utils.h"
 
 namespace txt {
 
 RenderTest::RenderTest()
-    : snapshots_(0), font_collection_(std::make_shared<FontCollection>()) {
-  font_collection_->PushBack(sk_make_sp<AssetFontManager>(
-      std::make_unique<txt::DirectoryAssetDataProvider>(GetFontDir())));
-}
+    : snapshots_(0), font_collection_(txt::GetTestFontCollection()) {}
 
 RenderTest::~RenderTest() = default;
 
@@ -68,7 +64,7 @@ bool RenderTest::Snapshot() {
   error = mkdir(snapshot_dir.c_str(), permissions);
 #endif
   if (error > 0) {
-    FXL_LOG(ERROR) << "'snapshot/' Directory not available and could not be "
+    FML_LOG(ERROR) << "'snapshot/' Directory not available and could not be "
                       "created. Please create manually to save snapshot.";
     return false;
   }

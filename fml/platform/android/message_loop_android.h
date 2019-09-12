@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,10 +9,9 @@
 
 #include <atomic>
 
+#include "flutter/fml/macros.h"
 #include "flutter/fml/message_loop_impl.h"
-#include "lib/fxl/files/unique_fd.h"
-#include "lib/fxl/macros.h"
-#include "lib/fxl/memory/unique_object.h"
+#include "flutter/fml/unique_fd.h"
 
 namespace fml {
 
@@ -24,8 +23,8 @@ struct UniqueLooperTraits {
 
 class MessageLoopAndroid : public MessageLoopImpl {
  private:
-  fxl::UniqueObject<ALooper*, UniqueLooperTraits> looper_;
-  fxl::UniqueFD timer_fd_;
+  fml::UniqueObject<ALooper*, UniqueLooperTraits> looper_;
+  fml::UniqueFD timer_fd_;
   bool running_;
 
   MessageLoopAndroid();
@@ -36,13 +35,13 @@ class MessageLoopAndroid : public MessageLoopImpl {
 
   void Terminate() override;
 
-  void WakeUp(fxl::TimePoint time_point) override;
+  void WakeUp(fml::TimePoint time_point) override;
 
   void OnEventFired();
 
-  FRIEND_MAKE_REF_COUNTED(MessageLoopAndroid);
-  FRIEND_REF_COUNTED_THREAD_SAFE(MessageLoopAndroid);
-  FXL_DISALLOW_COPY_AND_ASSIGN(MessageLoopAndroid);
+  FML_FRIEND_MAKE_REF_COUNTED(MessageLoopAndroid);
+  FML_FRIEND_REF_COUNTED_THREAD_SAFE(MessageLoopAndroid);
+  FML_DISALLOW_COPY_AND_ASSIGN(MessageLoopAndroid);
 };
 
 }  // namespace fml

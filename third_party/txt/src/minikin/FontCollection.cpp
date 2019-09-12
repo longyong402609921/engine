@@ -23,6 +23,7 @@
 #include <log/log.h>
 #include "unicode/unistr.h"
 #include "unicode/unorm2.h"
+#include "unicode/utf16.h"
 
 #include <minikin/Emoji.h>
 #include <minikin/FontCollection.h>
@@ -44,6 +45,12 @@ const uint32_t TEXT_STYLE_VS = 0xFE0E;
 
 uint32_t FontCollection::sNextId = 0;
 
+// libtxt: return a locale string for a language list ID
+std::string GetFontLocale(uint32_t langListId) {
+  const FontLanguages& langs = FontLanguageListCache::getById(langListId);
+  return langs.size() ? langs[0].getString() : "";
+}
+
 FontCollection::FontCollection(std::shared_ptr<FontFamily>&& typeface)
     : mMaxChar(0) {
   std::vector<std::shared_ptr<FontFamily>> typefaces;
@@ -59,7 +66,7 @@ FontCollection::FontCollection(
 
 void FontCollection::init(
     const vector<std::shared_ptr<FontFamily>>& typefaces) {
-  std::lock_guard<std::mutex> _l(gMinikinLock);
+  std::scoped_lock _l(gMinikinLock);
   mId = sNextId++;
   vector<uint32_t> lastChar;
   size_t nTypefaces = typefaces.size();
@@ -228,7 +235,7 @@ uint32_t FontCollection::calcCoverageScore(
 }
 
 // Calculate font scores based on the script matching, subtag matching and
-// primary langauge matching.
+// primary language matching.
 //
 // 1. If only the font's language matches or there is no matches between
 // requested font and
@@ -292,6 +299,15 @@ const std::shared_ptr<FontFamily>& FontCollection::getFamilyForChar(
     uint32_t langListId,
     int variant) const {
   if (ch >= mMaxChar) {
+    // libtxt: check if the fallback font provider can match this character
+    if (mFallbackFontProvider) {
+      const std::shared_ptr<FontFamily>& fallback =
+          mFallbackFontProvider->matchFallbackFont(ch,
+                                                   GetFontLocale(langListId));
+      if (fallback) {
+        return fallback;
+      }
+    }
     return mFamilies[0];
   }
 
@@ -321,6 +337,16 @@ const std::shared_ptr<FontFamily>& FontCollection::getFamilyForChar(
     }
   }
   if (bestFamilyIndex == -1) {
+    // libtxt: check if the fallback font provider can match this character
+    if (mFallbackFontProvider) {
+      const std::shared_ptr<FontFamily>& fallback =
+          mFallbackFontProvider->matchFallbackFont(ch,
+                                                   GetFontLocale(langListId));
+      if (fallback) {
+        return fallback;
+      }
+    }
+
     UErrorCode errorCode = U_ZERO_ERROR;
     const UNormalizer2* normalizer = unorm2_getNFDInstance(&errorCode);
     if (U_SUCCESS(errorCode)) {
@@ -380,7 +406,7 @@ bool FontCollection::hasVariationSelector(uint32_t baseCodepoint,
     return false;
   }
 
-  std::lock_guard<std::mutex> _l(gMinikinLock);
+  std::scoped_lock _l(gMinikinLock);
 
   // Currently mRanges can not be used here since it isn't aware of the
   // variation sequence.

@@ -1,60 +1,62 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "flutter/flow/layers/picture_layer.h"
 
-#include "flutter/common/threads.h"
-#include "lib/fxl/logging.h"
+#include "flutter/fml/logging.h"
 
-namespace flow {
+namespace flutter {
 
-PictureLayer::PictureLayer() = default;
+PictureLayer::PictureLayer(const SkPoint& offset,
+                           SkiaGPUObject<SkPicture> picture,
+                           bool is_complex,
+                           bool will_change)
+    : offset_(offset),
+      picture_(std::move(picture)),
+      is_complex_(is_complex),
+      will_change_(will_change) {}
 
-PictureLayer::~PictureLayer() {
-  // The picture may contain references to textures that are associated
-  // with the IO thread's context.
-  SkPicture* picture = picture_.release();
-  if (picture) {
-    blink::Threads::IO()->PostTask([picture]() { picture->unref(); });
-  }
-}
+PictureLayer::~PictureLayer() = default;
 
 void PictureLayer::Preroll(PrerollContext* context, const SkMatrix& matrix) {
-  if (auto cache = context->raster_cache) {
-    raster_cache_result_ = cache->GetPrerolledImage(
-        context->gr_context, picture_.get(), matrix, context->dst_color_space,
-#if defined(OS_FUCHSIA)
-        context->metrics,
+  SkPicture* sk_picture = picture();
+
+  if (auto* cache = context->raster_cache) {
+    SkMatrix ctm = matrix;
+    ctm.postTranslate(offset_.x(), offset_.y());
+#ifndef SUPPORT_FRACTIONAL_TRANSLATION
+    ctm = RasterCache::GetIntegralTransCTM(ctm);
 #endif
-        is_complex_, will_change_);
+    cache->Prepare(context->gr_context, sk_picture, ctm,
+                   context->dst_color_space, is_complex_, will_change_);
   }
 
-  SkRect bounds = picture_->cullRect().makeOffset(offset_.x(), offset_.y());
+  SkRect bounds = sk_picture->cullRect().makeOffset(offset_.x(), offset_.y());
   set_paint_bounds(bounds);
 }
 
 void PictureLayer::Paint(PaintContext& context) const {
   TRACE_EVENT0("flutter", "PictureLayer::Paint");
-  FXL_DCHECK(picture_);
-  FXL_DCHECK(needs_painting());
+  FML_DCHECK(picture_.get());
+  FML_DCHECK(needs_painting());
 
-  SkAutoCanvasRestore save(&context.canvas, true);
-  context.canvas.translate(offset_.x(), offset_.y());
+  SkAutoCanvasRestore save(context.leaf_nodes_canvas, true);
+  context.leaf_nodes_canvas->translate(offset_.x(), offset_.y());
+#ifndef SUPPORT_FRACTIONAL_TRANSLATION
+  context.leaf_nodes_canvas->setMatrix(RasterCache::GetIntegralTransCTM(
+      context.leaf_nodes_canvas->getTotalMatrix()));
+#endif
 
-  if (raster_cache_result_.is_valid()) {
-    SkPaint paint;
-    paint.setFilterQuality(kLow_SkFilterQuality);
-    context.canvas.drawImageRect(
-        raster_cache_result_.image(),             // image
-        raster_cache_result_.source_rect(),       // source
-        raster_cache_result_.destination_rect(),  // destination
-        &paint,                                   // paint
-        SkCanvas::kStrict_SrcRectConstraint       // source constraint
-    );
-  } else {
-    context.canvas.drawPicture(picture_.get());
+  if (context.raster_cache) {
+    const SkMatrix& ctm = context.leaf_nodes_canvas->getTotalMatrix();
+    RasterCacheResult result = context.raster_cache->Get(*picture(), ctm);
+    if (result.is_valid()) {
+      result.draw(*context.leaf_nodes_canvas);
+      return;
+    }
   }
+  context.leaf_nodes_canvas->drawPicture(picture());
 }
 
-}  // namespace flow
+}  // namespace flutter

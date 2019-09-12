@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,13 +7,15 @@
 #include <CoreFoundation/CFRunLoop.h>
 #include <Foundation/Foundation.h>
 
+#include "flutter/fml/logging.h"
+
 namespace fml {
 
 static constexpr CFTimeInterval kDistantFuture = 1.0e10;
 
 MessageLoopDarwin::MessageLoopDarwin()
     : running_(false), loop_((CFRunLoopRef)CFRetain(CFRunLoopGetCurrent())) {
-  FXL_DCHECK(loop_ != nullptr);
+  FML_DCHECK(loop_ != nullptr);
 
   // Setup the delayed wake source.
   CFRunLoopTimerContext timer_context = {
@@ -25,7 +27,7 @@ MessageLoopDarwin::MessageLoopDarwin()
                            reinterpret_cast<CFRunLoopTimerCallBack>(&MessageLoopDarwin::OnTimerFire)
                            /* callout */,
                            &timer_context /* context */));
-  FXL_DCHECK(delayed_wake_timer_ != nullptr);
+  FML_DCHECK(delayed_wake_timer_ != nullptr);
   CFRunLoopAddTimer(loop_, delayed_wake_timer_, kCFRunLoopCommonModes);
 }
 
@@ -35,7 +37,7 @@ MessageLoopDarwin::~MessageLoopDarwin() {
 }
 
 void MessageLoopDarwin::Run() {
-  FXL_DCHECK(loop_ == CFRunLoopGetCurrent());
+  FML_DCHECK(loop_ == CFRunLoopGetCurrent());
 
   running_ = true;
 
@@ -59,12 +61,12 @@ void MessageLoopDarwin::Terminate() {
   CFRunLoopStop(loop_);
 }
 
-void MessageLoopDarwin::WakeUp(fxl::TimePoint time_point) {
+void MessageLoopDarwin::WakeUp(fml::TimePoint time_point) {
   // Rearm the timer. The time bases used by CoreFoundation and FXL are
   // different and must be accounted for.
   CFRunLoopTimerSetNextFireDate(
       delayed_wake_timer_,
-      CFAbsoluteTimeGetCurrent() + (time_point - fxl::TimePoint::Now()).ToSecondsF());
+      CFAbsoluteTimeGetCurrent() + (time_point - fml::TimePoint::Now()).ToSecondsF());
 }
 
 void MessageLoopDarwin::OnTimerFire(CFRunLoopTimerRef timer, MessageLoopDarwin* loop) {

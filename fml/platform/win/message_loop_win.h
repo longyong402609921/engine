@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,9 @@
 
 #include <windows.h>
 
+#include "flutter/fml/macros.h"
 #include "flutter/fml/message_loop_impl.h"
-#include "lib/fxl/macros.h"
-#include "lib/fxl/memory/unique_object.h"
+#include "flutter/fml/unique_object.h"
 
 namespace fml {
 
@@ -24,7 +24,7 @@ class MessageLoopWin : public MessageLoopImpl {
   };
 
   bool running_;
-  fxl::UniqueObject<HANDLE, UniqueHandleTraits> timer_;
+  fml::UniqueObject<HANDLE, UniqueHandleTraits> timer_;
 
   MessageLoopWin();
 
@@ -34,11 +34,11 @@ class MessageLoopWin : public MessageLoopImpl {
 
   void Terminate() override;
 
-  void WakeUp(fxl::TimePoint time_point) override;
+  void WakeUp(fml::TimePoint time_point) override;
 
-  FRIEND_MAKE_REF_COUNTED(MessageLoopWin);
-  FRIEND_REF_COUNTED_THREAD_SAFE(MessageLoopWin);
-  FXL_DISALLOW_COPY_AND_ASSIGN(MessageLoopWin);
+  FML_FRIEND_MAKE_REF_COUNTED(MessageLoopWin);
+  FML_FRIEND_REF_COUNTED_THREAD_SAFE(MessageLoopWin);
+  FML_DISALLOW_COPY_AND_ASSIGN(MessageLoopWin);
 };
 
 }  // namespace fml

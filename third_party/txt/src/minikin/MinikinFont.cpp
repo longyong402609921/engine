@@ -21,7 +21,7 @@
 namespace minikin {
 
 MinikinFont::~MinikinFont() {
-  std::lock_guard<std::mutex> _l(gMinikinLock);
+  std::scoped_lock _l(gMinikinLock);
   purgeHbFontLocked(this);
 }
 

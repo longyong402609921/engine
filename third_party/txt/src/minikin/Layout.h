@@ -37,6 +37,10 @@ struct LayoutGlyph {
   unsigned int glyph_id;
   float x;
   float y;
+
+  // libtxt extension: record the cluster (character index) that corresponds
+  // to this glyph
+  uint32_t cluster;
 };
 
 // Internal state used during layout operation
@@ -74,7 +78,7 @@ class Layout {
                 size_t start,
                 size_t count,
                 size_t bufSize,
-                int bidiFlags,
+                bool isRtl,
                 const FontStyle& style,
                 const MinikinPaint& paint,
                 const std::shared_ptr<FontCollection>& collection);
@@ -83,7 +87,7 @@ class Layout {
                            size_t start,
                            size_t count,
                            size_t bufSize,
-                           int bidiFlags,
+                           bool isRtl,
                            const FontStyle& style,
                            const MinikinPaint& paint,
                            const std::shared_ptr<FontCollection>& collection,
@@ -94,6 +98,7 @@ class Layout {
   const MinikinFont* getFont(int i) const;
   FontFakery getFakery(int i) const;
   unsigned int getGlyphId(int i) const;
+  uint32_t getGlyphCluster(int i) const;  // libtxt extension
   float getX(int i) const;
   float getY(int i) const;
 

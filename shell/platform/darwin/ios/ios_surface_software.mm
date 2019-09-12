@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,22 +8,23 @@
 
 #include <memory>
 
+#include "flutter/fml/logging.h"
 #include "flutter/fml/platform/darwin/cf_utils.h"
 #include "flutter/fml/trace_event.h"
-#include "lib/fxl/logging.h"
 #include "third_party/skia/include/utils/mac/SkCGUtils.h"
 
-namespace shell {
+namespace flutter {
 
-IOSSurfaceSoftware::IOSSurfaceSoftware(PlatformView::SurfaceConfig surface_config, CALayer* layer)
-    : IOSSurface(surface_config, layer) {
+IOSSurfaceSoftware::IOSSurfaceSoftware(fml::scoped_nsobject<CALayer> layer,
+                                       FlutterPlatformViewsController* platform_views_controller)
+    : IOSSurface(platform_views_controller), layer_(std::move(layer)) {
   UpdateStorageSizeIfNecessary();
 }
 
 IOSSurfaceSoftware::~IOSSurfaceSoftware() = default;
 
 bool IOSSurfaceSoftware::IsValid() const {
-  return GetLayer() != nullptr;
+  return layer_;
 }
 
 bool IOSSurfaceSoftware::ResourceContextMakeCurrent() {
@@ -37,12 +38,12 @@ void IOSSurfaceSoftware::UpdateStorageSizeIfNecessary() {
   // Android oddities.
 }
 
-std::unique_ptr<Surface> IOSSurfaceSoftware::CreateGPUSurface() {
+std::unique_ptr<Surface> IOSSurfaceSoftware::CreateGPUSurface(GrContext* gr_context) {
   if (!IsValid()) {
     return nullptr;
   }
 
-  auto surface = std::make_unique<GPUSurfaceSoftware>(this);
+  auto surface = std::make_unique<GPUSurfaceSoftware>(this, true /* render to surface */);
 
   if (!surface->IsValid()) {
     return nullptr;
@@ -63,7 +64,8 @@ sk_sp<SkSurface> IOSSurfaceSoftware::AcquireBackingStore(const SkISize& size) {
     return sk_surface_;
   }
 
-  SkImageInfo info = SkImageInfo::MakeN32(size.fWidth, size.fHeight, kPremul_SkAlphaType);
+  SkImageInfo info = SkImageInfo::MakeN32(size.fWidth, size.fHeight, kPremul_SkAlphaType,
+                                          SkColorSpace::MakeSRGB());
   sk_surface_ = SkSurface::MakeRaster(info, nullptr);
   return sk_surface_;
 }
@@ -120,10 +122,69 @@ bool IOSSurfaceSoftware::PresentBackingStore(sk_sp<SkSurface> backing_store) {
     return false;
   }
 
-  CALayer* layer = GetLayer();
-  layer.contents = reinterpret_cast<id>(static_cast<CGImageRef>(pixmap_image));
+  layer_.get().contents = reinterpret_cast<id>(static_cast<CGImageRef>(pixmap_image));
 
   return true;
 }
 
-}  // namespace shell
+ExternalViewEmbedder* IOSSurfaceSoftware::GetExternalViewEmbedder() {
+  if (IsIosEmbeddedViewsPreviewEnabled()) {
+    return this;
+  } else {
+    return nullptr;
+  }
+}
+
+// |ExternalViewEmbedder|
+sk_sp<SkSurface> IOSSurfaceSoftware::GetRootSurface() {
+  // On iOS, the root surface is created using a managed allocation that is submitted to the
+  // platform. Only the surfaces for the various overlays are controlled by this class.
+  return nullptr;
+}
+
+// |ExternalViewEmbedder|
+void IOSSurfaceSoftware::CancelFrame() {
+  FlutterPlatformViewsController* platform_views_controller = GetPlatformViewsController();
+  FML_CHECK(platform_views_controller != nullptr);
+  platform_views_controller->CancelFrame();
+}
+
+// |ExternalViewEmbedder|
+void IOSSurfaceSoftware::BeginFrame(SkISize frame_size, GrContext* context) {
+  FlutterPlatformViewsController* platform_views_controller = GetPlatformViewsController();
+  FML_CHECK(platform_views_controller != nullptr);
+  platform_views_controller->SetFrameSize(frame_size);
+}
+
+// |ExternalViewEmbedder|
+void IOSSurfaceSoftware::PrerollCompositeEmbeddedView(int view_id,
+                                                      std::unique_ptr<EmbeddedViewParams> params) {
+  FlutterPlatformViewsController* platform_views_controller = GetPlatformViewsController();
+  FML_CHECK(platform_views_controller != nullptr);
+  platform_views_controller->PrerollCompositeEmbeddedView(view_id, std::move(params));
+}
+
+// |ExternalViewEmbedder|
+std::vector<SkCanvas*> IOSSurfaceSoftware::GetCurrentCanvases() {
+  FlutterPlatformViewsController* platform_views_controller = GetPlatformViewsController();
+  FML_CHECK(platform_views_controller != nullptr);
+  return platform_views_controller->GetCurrentCanvases();
+}
+
+// |ExternalViewEmbedder|
+SkCanvas* IOSSurfaceSoftware::CompositeEmbeddedView(int view_id) {
+  FlutterPlatformViewsController* platform_views_controller = GetPlatformViewsController();
+  FML_CHECK(platform_views_controller != nullptr);
+  return platform_views_controller->CompositeEmbeddedView(view_id);
+}
+
+// |ExternalViewEmbedder|
+bool IOSSurfaceSoftware::SubmitFrame(GrContext* context) {
+  FlutterPlatformViewsController* platform_views_controller = GetPlatformViewsController();
+  if (platform_views_controller == nullptr) {
+    return true;
+  }
+  return platform_views_controller->SubmitFrame(nullptr, nullptr);
+}
+
+}  // namespace flutter

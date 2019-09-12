@@ -1,12 +1,18 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#define FML_USED_ON_EMBEDDER
+
+#include <iostream>
 #include <thread>
 
+#include "flutter/fml/concurrent_message_loop.h"
 #include "flutter/fml/message_loop.h"
+#include "flutter/fml/synchronization/count_down_latch.h"
+#include "flutter/fml/synchronization/waitable_event.h"
+#include "flutter/fml/task_runner.h"
 #include "gtest/gtest.h"
-#include "lib/fxl/synchronization/waitable_event.h"
 
 #define TIME_SENSITIVE(x) TimeSensitiveTest_##x
 #if OS_WIN
@@ -25,8 +31,8 @@ TEST(MessageLoop, GetCurrent) {
 
 TEST(MessageLoop, DifferentThreadsHaveDifferentLoops) {
   fml::MessageLoop* loop1 = nullptr;
-  fxl::AutoResetWaitableEvent latch1;
-  fxl::AutoResetWaitableEvent term1;
+  fml::AutoResetWaitableEvent latch1;
+  fml::AutoResetWaitableEvent term1;
   std::thread thread1([&loop1, &latch1, &term1]() {
     fml::MessageLoop::EnsureInitializedForCurrentThread();
     loop1 = &fml::MessageLoop::GetCurrent();
@@ -35,8 +41,8 @@ TEST(MessageLoop, DifferentThreadsHaveDifferentLoops) {
   });
 
   fml::MessageLoop* loop2 = nullptr;
-  fxl::AutoResetWaitableEvent latch2;
-  fxl::AutoResetWaitableEvent term2;
+  fml::AutoResetWaitableEvent latch2;
+  fml::AutoResetWaitableEvent term2;
   std::thread thread2([&loop2, &latch2, &term2]() {
     fml::MessageLoop::EnsureInitializedForCurrentThread();
     loop2 = &fml::MessageLoop::GetCurrent();
@@ -108,7 +114,7 @@ TEST(MessageLoop, DelayedTasksAtSameTimeAreRunInOrder) {
     auto& loop = fml::MessageLoop::GetCurrent();
     size_t current = 0;
     const auto now_plus_some =
-        fxl::TimePoint::Now() + fxl::TimeDelta::FromMilliseconds(2);
+        fml::TimePoint::Now() + fml::TimeDelta::FromMilliseconds(2);
     for (size_t i = 0; i < count; i++) {
       loop.GetTaskRunner()->PostTaskForTime(
           PLATFORM_SPECIFIC_CAPTURE(&terminated, i, &current)() {
@@ -131,8 +137,8 @@ TEST(MessageLoop, DelayedTasksAtSameTimeAreRunInOrder) {
 }
 
 TEST(MessageLoop, CheckRunsTaskOnCurrentThread) {
-  fxl::RefPtr<fxl::TaskRunner> runner;
-  fxl::AutoResetWaitableEvent latch;
+  fml::RefPtr<fml::TaskRunner> runner;
+  fml::AutoResetWaitableEvent latch;
   std::thread thread([&runner, &latch]() {
     fml::MessageLoop::EnsureInitializedForCurrentThread();
     auto& loop = fml::MessageLoop::GetCurrent();
@@ -151,17 +157,17 @@ TEST(MessageLoop, TIME_SENSITIVE(SingleDelayedTaskByDelta)) {
   std::thread thread([&checked]() {
     fml::MessageLoop::EnsureInitializedForCurrentThread();
     auto& loop = fml::MessageLoop::GetCurrent();
-    auto begin = fxl::TimePoint::Now();
+    auto begin = fml::TimePoint::Now();
     loop.GetTaskRunner()->PostDelayedTask(
         [begin, &checked]() {
-          auto delta = fxl::TimePoint::Now() - begin;
+          auto delta = fml::TimePoint::Now() - begin;
           auto ms = delta.ToMillisecondsF();
           ASSERT_GE(ms, 3);
           ASSERT_LE(ms, 7);
           checked = true;
           fml::MessageLoop::GetCurrent().Terminate();
         },
-        fxl::TimeDelta::FromMilliseconds(5));
+        fml::TimeDelta::FromMilliseconds(5));
     loop.Run();
   });
   thread.join();
@@ -173,17 +179,17 @@ TEST(MessageLoop, TIME_SENSITIVE(SingleDelayedTaskForTime)) {
   std::thread thread([&checked]() {
     fml::MessageLoop::EnsureInitializedForCurrentThread();
     auto& loop = fml::MessageLoop::GetCurrent();
-    auto begin = fxl::TimePoint::Now();
+    auto begin = fml::TimePoint::Now();
     loop.GetTaskRunner()->PostTaskForTime(
         [begin, &checked]() {
-          auto delta = fxl::TimePoint::Now() - begin;
+          auto delta = fml::TimePoint::Now() - begin;
           auto ms = delta.ToMillisecondsF();
           ASSERT_GE(ms, 3);
           ASSERT_LE(ms, 7);
           checked = true;
           fml::MessageLoop::GetCurrent().Terminate();
         },
-        fxl::TimePoint::Now() + fxl::TimeDelta::FromMilliseconds(5));
+        fml::TimePoint::Now() + fml::TimeDelta::FromMilliseconds(5));
     loop.Run();
   });
   thread.join();
@@ -197,10 +203,10 @@ TEST(MessageLoop, TIME_SENSITIVE(MultipleDelayedTasksWithIncreasingDeltas)) {
     fml::MessageLoop::EnsureInitializedForCurrentThread();
     auto& loop = fml::MessageLoop::GetCurrent();
     for (int target_ms = 0 + 2; target_ms < count + 2; target_ms++) {
-      auto begin = fxl::TimePoint::Now();
+      auto begin = fml::TimePoint::Now();
       loop.GetTaskRunner()->PostDelayedTask(
           PLATFORM_SPECIFIC_CAPTURE(begin, target_ms, &checked)() {
-            auto delta = fxl::TimePoint::Now() - begin;
+            auto delta = fml::TimePoint::Now() - begin;
             auto ms = delta.ToMillisecondsF();
             ASSERT_GE(ms, target_ms - 2);
             ASSERT_LE(ms, target_ms + 2);
@@ -209,7 +215,7 @@ TEST(MessageLoop, TIME_SENSITIVE(MultipleDelayedTasksWithIncreasingDeltas)) {
               fml::MessageLoop::GetCurrent().Terminate();
             }
           },
-          fxl::TimeDelta::FromMilliseconds(target_ms));
+          fml::TimeDelta::FromMilliseconds(target_ms));
     }
     loop.Run();
   });
@@ -224,10 +230,10 @@ TEST(MessageLoop, TIME_SENSITIVE(MultipleDelayedTasksWithDecreasingDeltas)) {
     fml::MessageLoop::EnsureInitializedForCurrentThread();
     auto& loop = fml::MessageLoop::GetCurrent();
     for (int target_ms = count + 2; target_ms > 0 + 2; target_ms--) {
-      auto begin = fxl::TimePoint::Now();
+      auto begin = fml::TimePoint::Now();
       loop.GetTaskRunner()->PostDelayedTask(
           PLATFORM_SPECIFIC_CAPTURE(begin, target_ms, &checked)() {
-            auto delta = fxl::TimePoint::Now() - begin;
+            auto delta = fml::TimePoint::Now() - begin;
             auto ms = delta.ToMillisecondsF();
             ASSERT_GE(ms, target_ms - 2);
             ASSERT_LE(ms, target_ms + 2);
@@ -236,29 +242,13 @@ TEST(MessageLoop, TIME_SENSITIVE(MultipleDelayedTasksWithDecreasingDeltas)) {
               fml::MessageLoop::GetCurrent().Terminate();
             }
           },
-          fxl::TimeDelta::FromMilliseconds(target_ms));
+          fml::TimeDelta::FromMilliseconds(target_ms));
     }
     loop.Run();
   });
   thread.join();
   ASSERT_EQ(checked, count);
 }
-
-class CustomTaskObserver : public fml::TaskObserver {
- public:
-  CustomTaskObserver(std::function<void()> lambda) : lambda_(lambda){};
-
-  ~CustomTaskObserver() override = default;
-
-  void DidProcessTask() override {
-    if (lambda_) {
-      lambda_();
-    }
-  };
-
- private:
-  std::function<void()> lambda_;
-};
 
 TEST(MessageLoop, TaskObserverFire) {
   bool started = false;
@@ -269,8 +259,7 @@ TEST(MessageLoop, TaskObserverFire) {
     auto& loop = fml::MessageLoop::GetCurrent();
     size_t task_count = 0;
     size_t obs_count = 0;
-    CustomTaskObserver obs(
-        PLATFORM_SPECIFIC_CAPTURE(&obs_count)() { obs_count++; });
+    auto obs = PLATFORM_SPECIFIC_CAPTURE(&obs_count)() { obs_count++; };
     for (size_t i = 0; i < count; i++) {
       loop.GetTaskRunner()->PostTask(
           PLATFORM_SPECIFIC_CAPTURE(&terminated, i, &task_count)() {
@@ -282,7 +271,7 @@ TEST(MessageLoop, TaskObserverFire) {
             }
           });
     }
-    loop.AddTaskObserver(&obs);
+    loop.AddTaskObserver(0, obs);
     loop.Run();
     ASSERT_EQ(task_count, count);
     ASSERT_EQ(obs_count, count);
@@ -291,4 +280,31 @@ TEST(MessageLoop, TaskObserverFire) {
   thread.join();
   ASSERT_TRUE(started);
   ASSERT_TRUE(terminated);
+}
+
+TEST(MessageLoop, CanCreateAndShutdownConcurrentMessageLoopsOverAndOver) {
+  for (size_t i = 0; i < 10; ++i) {
+    auto loop = fml::ConcurrentMessageLoop::Create(i + 1);
+    ASSERT_EQ(loop->GetWorkerCount(), i + 1);
+  }
+}
+
+TEST(MessageLoop, CanCreateConcurrentMessageLoop) {
+  auto loop = fml::ConcurrentMessageLoop::Create();
+  auto task_runner = loop->GetTaskRunner();
+  const size_t kCount = 10;
+  fml::CountDownLatch latch(kCount);
+  std::mutex thread_ids_mutex;
+  std::set<std::thread::id> thread_ids;
+  for (size_t i = 0; i < kCount; ++i) {
+    task_runner->PostTask([&]() {
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+      std::cout << "Ran on thread: " << std::this_thread::get_id() << std::endl;
+      std::scoped_lock lock(thread_ids_mutex);
+      thread_ids.insert(std::this_thread::get_id());
+      latch.CountDown();
+    });
+  }
+  latch.Wait();
+  ASSERT_GE(thread_ids.size(), 1u);
 }

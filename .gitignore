@@ -3,8 +3,10 @@
 *~
 .*.sw?
 .DS_Store
+.ccls-cache
 .classpath
 .cproject
+.dart_tool
 .gdb_history
 .checkstyle
 .gdbinit
@@ -13,8 +15,16 @@
 .project
 .pub
 .pydevproject
+compile_commands.json
 cscope.*
 Session.vim
 tags
 Thumbs.db
 .idea
+pubspec.lock
+.vscode/
+docs/doxygen/
+xcuserdata
+
+third_party/gn/
+

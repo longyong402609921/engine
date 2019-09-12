@@ -1,19 +1,18 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "flutter/fml/mapping.h"
 
 #include <fcntl.h>
-
-#include <type_traits>
-
-#include "lib/fxl/build_config.h"
-
 #include <io.h>
 #include <windows.h>
 
-using PlatformResourceMapping = fml::FileMapping;
+#include <type_traits>
+
+#include "flutter/fml/file.h"
+#include "flutter/fml/platform/win/errors_win.h"
+#include "flutter/fml/platform/win/wstring_conversion.h"
 
 namespace fml {
 
@@ -21,55 +20,90 @@ Mapping::Mapping() = default;
 
 Mapping::~Mapping() = default;
 
-bool PlatformHasResourcesBundle() {
-  return !std::is_same<PlatformResourceMapping, FileMapping>::value;
+static bool IsWritable(
+    std::initializer_list<FileMapping::Protection> protection_flags) {
+  for (auto protection : protection_flags) {
+    if (protection == FileMapping::Protection::kWrite) {
+      return true;
+    }
+  }
+  return false;
 }
 
-std::unique_ptr<Mapping> GetResourceMapping(const std::string& resource_name) {
-  return std::make_unique<PlatformResourceMapping>(resource_name);
+static bool IsExecutable(
+    std::initializer_list<FileMapping::Protection> protection_flags) {
+  for (auto protection : protection_flags) {
+    if (protection == FileMapping::Protection::kExecute) {
+      return true;
+    }
+  }
+  return false;
 }
 
-FileMapping::FileMapping(const std::string& path)
+FileMapping::FileMapping(const fml::UniqueFD& fd,
+                         std::initializer_list<Protection> protections)
     : size_(0), mapping_(nullptr) {
-  HANDLE file_handle_ =
-      CreateFileA(reinterpret_cast<LPCSTR>(path.c_str()), GENERIC_READ,
-                  FILE_SHARE_READ, nullptr, OPEN_EXISTING,
-                  FILE_ATTRIBUTE_NORMAL | FILE_FLAG_RANDOM_ACCESS, nullptr);
-
-  if (file_handle_ == INVALID_HANDLE_VALUE) {
+  if (!fd.is_valid()) {
     return;
   }
 
-  size_ = GetFileSize(file_handle_, nullptr);
-  if (size_ == INVALID_FILE_SIZE) {
-    size_ = 0;
+  const auto mapping_size = ::GetFileSize(fd.get(), nullptr);
+
+  if (mapping_size == INVALID_FILE_SIZE) {
+    FML_DLOG(ERROR) << "Invalid file size. " << GetLastErrorMessage();
     return;
   }
 
-  mapping_handle_ = CreateFileMapping(file_handle_, nullptr, PAGE_READONLY, 0,
-                                      size_, nullptr);
-
-  CloseHandle(file_handle_);
-
-  if (mapping_handle_ == INVALID_HANDLE_VALUE) {
+  if (mapping_size == 0) {
+    valid_ = true;
     return;
   }
 
-  auto mapping = MapViewOfFile(mapping_handle_, FILE_MAP_READ, 0, 0, size_);
+  DWORD protect_flags = 0;
+  bool read_only = !IsWritable(protections);
 
-  if (mapping == INVALID_HANDLE_VALUE) {
-    CloseHandle(mapping_handle_);
-    mapping_handle_ = INVALID_HANDLE_VALUE;
+  if (IsExecutable(protections)) {
+    protect_flags = PAGE_EXECUTE_READ;
+  } else if (read_only) {
+    protect_flags = PAGE_READONLY;
+  } else {
+    protect_flags = PAGE_READWRITE;
+  }
+
+  mapping_handle_.reset(::CreateFileMapping(fd.get(),       // hFile
+                                            nullptr,        // lpAttributes
+                                            protect_flags,  // flProtect
+                                            0,              // dwMaximumSizeHigh
+                                            0,              // dwMaximumSizeLow
+                                            nullptr         // lpName
+                                            ));
+
+  if (!mapping_handle_.is_valid()) {
     return;
   }
 
-  mapping_ = static_cast<uint8_t*>(mapping);
+  const DWORD desired_access = read_only ? FILE_MAP_READ : FILE_MAP_WRITE;
+
+  auto mapping = reinterpret_cast<uint8_t*>(
+      MapViewOfFile(mapping_handle_.get(), desired_access, 0, 0, mapping_size));
+
+  if (mapping == nullptr) {
+    FML_DLOG(ERROR) << "Could not setup file mapping. "
+                    << GetLastErrorMessage();
+    return;
+  }
+
+  mapping_ = mapping;
+  size_ = mapping_size;
+  valid_ = true;
+  if (IsWritable(protections)) {
+    mutable_mapping_ = mapping_;
+  }
 }
 
 FileMapping::~FileMapping() {
   if (mapping_ != nullptr) {
     UnmapViewOfFile(mapping_);
-    CloseHandle(mapping_handle_);
   }
 }
 
@@ -79,6 +113,10 @@ size_t FileMapping::GetSize() const {
 
 const uint8_t* FileMapping::GetMapping() const {
   return mapping_;
+}
+
+bool FileMapping::IsValid() const {
+  return valid_;
 }
 
 }  // namespace fml

@@ -15,42 +15,50 @@
  */
 
 #include "txt/asset_font_manager.h"
+
 #include <memory>
-#include "lib/fxl/logging.h"
+
+#include "flutter/fml/logging.h"
+#include "third_party/skia/include/core/SkString.h"
+#include "third_party/skia/include/core/SkTypeface.h"
 
 namespace txt {
 
 AssetFontManager::AssetFontManager(
-    std::unique_ptr<AssetDataProvider> data_provider)
-    : data_provider_(std::move(data_provider)) {
-  FXL_DCHECK(data_provider_ != nullptr);
+    std::unique_ptr<FontAssetProvider> font_provider)
+    : font_provider_(std::move(font_provider)) {
+  FML_DCHECK(font_provider_ != nullptr);
 }
 
 AssetFontManager::~AssetFontManager() = default;
 
 int AssetFontManager::onCountFamilies() const {
-  return data_provider_->GetFamilyCount();
+  return font_provider_->GetFamilyCount();
 }
 
 void AssetFontManager::onGetFamilyName(int index, SkString* familyName) const {
-  FXL_DCHECK(false);
+  familyName->set(font_provider_->GetFamilyName(index).c_str());
 }
 
 SkFontStyleSet* AssetFontManager::onCreateStyleSet(int index) const {
-  FXL_DCHECK(false);
+  FML_DCHECK(false);
   return nullptr;
 }
 
 SkFontStyleSet* AssetFontManager::onMatchFamily(
     const char family_name_string[]) const {
   std::string family_name(family_name_string);
-  return data_provider_->MatchFamily(family_name);
+  return font_provider_->MatchFamily(family_name);
 }
 
-SkTypeface* AssetFontManager::onMatchFamilyStyle(const char familyName[],
-                                                 const SkFontStyle&) const {
-  FXL_DCHECK(false);
-  return nullptr;
+SkTypeface* AssetFontManager::onMatchFamilyStyle(
+    const char familyName[],
+    const SkFontStyle& style) const {
+  SkFontStyleSet* font_style_set =
+      font_provider_->MatchFamily(std::string(familyName));
+  if (font_style_set == nullptr)
+    return nullptr;
+  return font_style_set->matchStyle(style);
 }
 
 SkTypeface* AssetFontManager::onMatchFamilyStyleCharacter(
@@ -64,40 +72,40 @@ SkTypeface* AssetFontManager::onMatchFamilyStyleCharacter(
 
 SkTypeface* AssetFontManager::onMatchFaceStyle(const SkTypeface*,
                                                const SkFontStyle&) const {
-  FXL_DCHECK(false);
+  FML_DCHECK(false);
   return nullptr;
 }
 
 sk_sp<SkTypeface> AssetFontManager::onMakeFromData(sk_sp<SkData>,
                                                    int ttcIndex) const {
-  FXL_DCHECK(false);
+  FML_DCHECK(false);
   return nullptr;
 }
 
 sk_sp<SkTypeface> AssetFontManager::onMakeFromStreamIndex(
     std::unique_ptr<SkStreamAsset>,
     int ttcIndex) const {
-  FXL_DCHECK(false);
+  FML_DCHECK(false);
   return nullptr;
 }
 
 sk_sp<SkTypeface> AssetFontManager::onMakeFromStreamArgs(
     std::unique_ptr<SkStreamAsset>,
     const SkFontArguments&) const {
-  FXL_DCHECK(false);
+  FML_DCHECK(false);
   return nullptr;
 }
 
 sk_sp<SkTypeface> AssetFontManager::onMakeFromFile(const char path[],
                                                    int ttcIndex) const {
-  FXL_DCHECK(false);
+  FML_DCHECK(false);
   return nullptr;
 }
 
 sk_sp<SkTypeface> AssetFontManager::onLegacyMakeTypeface(
     const char familyName[],
     SkFontStyle) const {
-  FXL_DCHECK(false);
+  FML_DCHECK(false);
   return nullptr;
 }
 

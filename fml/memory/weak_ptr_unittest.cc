@@ -1,4 +1,4 @@
-// Copyright 2016 The Fuchsia Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -160,37 +160,6 @@ TEST(WeakPtrTest, UpcastMoveAssignment) {
   ptr2 = std::move(ptr);
   EXPECT_EQ(nullptr, ptr.get());
   EXPECT_EQ(&data, ptr2.get());
-}
-
-TEST(WeakPtrTest, InvalidateWeakPtrs) {
-  int data = 0;
-  WeakPtrFactory<int> factory(&data);
-  WeakPtr<int> ptr = factory.GetWeakPtr();
-  EXPECT_EQ(&data, ptr.get());
-  EXPECT_TRUE(factory.HasWeakPtrs());
-  factory.InvalidateWeakPtrs();
-  EXPECT_EQ(nullptr, ptr.get());
-  EXPECT_FALSE(factory.HasWeakPtrs());
-
-  // Test that the factory can create new weak pointers after a
-  // |InvalidateWeakPtrs()| call, and that they remain valid until the next
-  // |InvalidateWeakPtrs()| call.
-  WeakPtr<int> ptr2 = factory.GetWeakPtr();
-  EXPECT_EQ(&data, ptr2.get());
-  EXPECT_TRUE(factory.HasWeakPtrs());
-  factory.InvalidateWeakPtrs();
-  EXPECT_EQ(nullptr, ptr2.get());
-  EXPECT_FALSE(factory.HasWeakPtrs());
-}
-
-TEST(WeakPtrTest, HasWeakPtrs) {
-  int data = 0;
-  WeakPtrFactory<int> factory(&data);
-  {
-    WeakPtr<int> ptr = factory.GetWeakPtr();
-    EXPECT_TRUE(factory.HasWeakPtrs());
-  }
-  EXPECT_FALSE(factory.HasWeakPtrs());
 }
 
 }  // namespace

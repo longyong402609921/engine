@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,6 @@
 #include <unistd.h>
 
 #include "flutter/fml/platform/linux/timerfd.h"
-#include "lib/fxl/files/eintr_wrapper.h"
 
 namespace fml {
 
@@ -33,8 +32,8 @@ MessageLoopAndroid::MessageLoopAndroid()
     : looper_(AcquireLooperForThread()),
       timer_fd_(::timerfd_create(kClockType, TFD_NONBLOCK | TFD_CLOEXEC)),
       running_(false) {
-  FXL_CHECK(looper_.is_valid());
-  FXL_CHECK(timer_fd_.is_valid());
+  FML_CHECK(looper_.is_valid());
+  FML_CHECK(timer_fd_.is_valid());
 
   static const int kWakeEvents = ALOOPER_EVENT_INPUT;
 
@@ -52,16 +51,16 @@ MessageLoopAndroid::MessageLoopAndroid()
                                    read_event_fd,          // callback
                                    this                    // baton
   );
-  FXL_CHECK(add_result == 1);
+  FML_CHECK(add_result == 1);
 }
 
 MessageLoopAndroid::~MessageLoopAndroid() {
   int remove_result = ::ALooper_removeFd(looper_.get(), timer_fd_.get());
-  FXL_CHECK(remove_result == 1);
+  FML_CHECK(remove_result == 1);
 }
 
 void MessageLoopAndroid::Run() {
-  FXL_DCHECK(looper_.get() == ALooper_forThread());
+  FML_DCHECK(looper_.get() == ALooper_forThread());
 
   running_ = true;
 
@@ -83,9 +82,9 @@ void MessageLoopAndroid::Terminate() {
   ALooper_wake(looper_.get());
 }
 
-void MessageLoopAndroid::WakeUp(fxl::TimePoint time_point) {
+void MessageLoopAndroid::WakeUp(fml::TimePoint time_point) {
   bool result = TimerRearm(timer_fd_.get(), time_point);
-  FXL_DCHECK(result);
+  FML_DCHECK(result);
 }
 
 void MessageLoopAndroid::OnEventFired() {

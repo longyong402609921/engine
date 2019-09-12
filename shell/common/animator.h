@@ -1,36 +1,56 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef FLUTTER_SHELL_COMMON_ANIMATOR_H_
 #define FLUTTER_SHELL_COMMON_ANIMATOR_H_
 
-#include "flutter/shell/common/engine.h"
+#include <deque>
+
+#include "flutter/common/task_runners.h"
+#include "flutter/fml/memory/ref_ptr.h"
+#include "flutter/fml/memory/weak_ptr.h"
+#include "flutter/fml/synchronization/semaphore.h"
+#include "flutter/fml/time/time_point.h"
+#include "flutter/shell/common/pipeline.h"
 #include "flutter/shell/common/rasterizer.h"
 #include "flutter/shell/common/vsync_waiter.h"
-#include "flutter/synchronization/pipeline.h"
-#include "flutter/synchronization/semaphore.h"
-#include "lib/fxl/memory/ref_ptr.h"
-#include "lib/fxl/memory/weak_ptr.h"
-#include "lib/fxl/time/time_point.h"
 
-namespace shell {
+namespace flutter {
 
-class Animator {
+namespace testing {
+class ShellTest;
+}
+
+/// Executor of animations.
+///
+/// In conjunction with the |VsyncWaiter| it allows callers (typically Dart
+/// code) to schedule work that ends up generating a |LayerTree|.
+class Animator final {
  public:
-  Animator(fml::WeakPtr<Rasterizer> rasterizer,
-           VsyncWaiter* waiter,
-           Engine* engine);
+  class Delegate {
+   public:
+    virtual void OnAnimatorBeginFrame(fml::TimePoint frame_time) = 0;
+
+    virtual void OnAnimatorNotifyIdle(int64_t deadline) = 0;
+
+    virtual void OnAnimatorDraw(
+        fml::RefPtr<Pipeline<flutter::LayerTree>> pipeline) = 0;
+
+    virtual void OnAnimatorDrawLastLayerTree() = 0;
+  };
+
+  Animator(Delegate& delegate,
+           TaskRunners task_runners,
+           std::unique_ptr<VsyncWaiter> waiter);
 
   ~Animator();
 
-  void set_rasterizer(fml::WeakPtr<Rasterizer> rasterizer) {
-    rasterizer_ = rasterizer;
-  }
+  float GetDisplayRefreshRate() const;
 
   void RequestFrame(bool regenerate_layer_tree = true);
 
-  void Render(std::unique_ptr<flow::LayerTree> layer_tree);
+  void Render(std::unique_ptr<flutter::LayerTree> layer_tree);
 
   void Start();
 
@@ -38,11 +58,15 @@ class Animator {
 
   void SetDimensionChangePending();
 
- private:
-  using LayerTreePipeline = flutter::Pipeline<flow::LayerTree>;
+  // Enqueue |trace_flow_id| into |trace_flow_ids_|.  The corresponding flow
+  // will be ended during the next |BeginFrame|.
+  void EnqueueTraceFlowId(uint64_t trace_flow_id);
 
-  void BeginFrame(fxl::TimePoint frame_start_time,
-                  fxl::TimePoint frame_target_time);
+ private:
+  using LayerTreePipeline = Pipeline<flutter::LayerTree>;
+
+  void BeginFrame(fml::TimePoint frame_start_time,
+                  fml::TimePoint frame_target_time);
 
   bool CanReuseLastLayerTree();
   void DrawLastLayerTree();
@@ -51,27 +75,31 @@ class Animator {
 
   const char* FrameParity();
 
-  fml::WeakPtr<Rasterizer> rasterizer_;
-  VsyncWaiter* waiter_;
-  Engine* engine_;
+  Delegate& delegate_;
+  TaskRunners task_runners_;
+  std::shared_ptr<VsyncWaiter> waiter_;
 
-  fxl::TimePoint last_begin_frame_time_;
+  fml::TimePoint last_begin_frame_time_;
   int64_t dart_frame_deadline_;
-  fxl::RefPtr<LayerTreePipeline> layer_tree_pipeline_;
-  flutter::Semaphore pending_frame_semaphore_;
+  fml::RefPtr<LayerTreePipeline> layer_tree_pipeline_;
+  fml::Semaphore pending_frame_semaphore_;
   LayerTreePipeline::ProducerContinuation producer_continuation_;
   int64_t frame_number_;
   bool paused_;
   bool regenerate_layer_tree_;
   bool frame_scheduled_;
+  int notify_idle_task_id_;
   bool dimension_change_pending_;
   SkISize last_layer_tree_size_;
+  std::deque<uint64_t> trace_flow_ids_;
 
   fml::WeakPtrFactory<Animator> weak_factory_;
 
-  FXL_DISALLOW_COPY_AND_ASSIGN(Animator);
+  friend class testing::ShellTest;
+
+  FML_DISALLOW_COPY_AND_ASSIGN(Animator);
 };
 
-}  // namespace shell
+}  // namespace flutter
 
 #endif  // FLUTTER_SHELL_COMMON_ANIMATOR_H_

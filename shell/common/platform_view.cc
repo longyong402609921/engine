@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,206 +6,135 @@
 
 #include <utility>
 
-#include "flutter/common/threads.h"
-#include "flutter/lib/ui/painting/resource_context.h"
+#include "flutter/fml/make_copyable.h"
+#include "flutter/fml/synchronization/waitable_event.h"
 #include "flutter/shell/common/rasterizer.h"
+#include "flutter/shell/common/shell.h"
 #include "flutter/shell/common/vsync_waiter_fallback.h"
-#include "lib/fxl/functional/make_copyable.h"
 #include "third_party/skia/include/gpu/GrContextOptions.h"
 #include "third_party/skia/include/gpu/gl/GrGLInterface.h"
 
-namespace shell {
+namespace flutter {
 
-PlatformView::PlatformView(std::unique_ptr<Rasterizer> rasterizer)
-    : rasterizer_(std::move(rasterizer)), size_(SkISize::Make(0, 0)) {
-  rasterizer_->SetTextureRegistry(&texture_registry_);
-  Shell::Shared().AddPlatformView(this);
-}
+PlatformView::PlatformView(Delegate& delegate, TaskRunners task_runners)
+    : delegate_(delegate),
+      task_runners_(std::move(task_runners)),
+      size_(SkISize::Make(0, 0)),
+      weak_factory_(this) {}
 
-PlatformView::~PlatformView() {
-  Shell::Shared().RemovePlatformView(this);
+PlatformView::~PlatformView() = default;
 
-  Rasterizer* rasterizer = rasterizer_.release();
-  blink::Threads::Gpu()->PostTask([rasterizer]() { delete rasterizer; });
-
-  Engine* engine = engine_.release();
-  blink::Threads::UI()->PostTask([engine]() { delete engine; });
-}
-
-void PlatformView::SetRasterizer(std::unique_ptr<Rasterizer> rasterizer) {
-  Rasterizer* r = rasterizer_.release();
-  blink::Threads::Gpu()->PostTask([r]() { delete r; });
-  rasterizer_ = std::move(rasterizer);
-  rasterizer_->SetTextureRegistry(&texture_registry_);
-  engine_->set_rasterizer(rasterizer_->GetWeakRasterizerPtr());
-}
-
-void PlatformView::CreateEngine() {
-  engine_.reset(new Engine(this));
+std::unique_ptr<VsyncWaiter> PlatformView::CreateVSyncWaiter() {
+  FML_DLOG(WARNING)
+      << "This platform does not provide a Vsync waiter implementation. A "
+         "simple timer based fallback is being used.";
+  return std::make_unique<VsyncWaiterFallback>(task_runners_);
 }
 
 void PlatformView::DispatchPlatformMessage(
-    fxl::RefPtr<blink::PlatformMessage> message) {
-  blink::Threads::UI()->PostTask(
-      [ engine = engine_->GetWeakPtr(), message = std::move(message) ] {
-        if (engine) {
-          engine->DispatchPlatformMessage(message);
-        }
-      });
+    fml::RefPtr<PlatformMessage> message) {
+  delegate_.OnPlatformViewDispatchPlatformMessage(std::move(message));
+}
+
+void PlatformView::DispatchPointerDataPacket(
+    std::unique_ptr<PointerDataPacket> packet) {
+  delegate_.OnPlatformViewDispatchPointerDataPacket(std::move(packet));
 }
 
 void PlatformView::DispatchSemanticsAction(int32_t id,
-                                           blink::SemanticsAction action,
+                                           SemanticsAction action,
                                            std::vector<uint8_t> args) {
-  blink::Threads::UI()->PostTask(
-      [ engine = engine_->GetWeakPtr(), id, action, args = std::move(args) ] {
-        if (engine) {
-          engine->DispatchSemanticsAction(
-              id, static_cast<blink::SemanticsAction>(action), std::move(args));
-        }
-      });
+  delegate_.OnPlatformViewDispatchSemanticsAction(id, action, std::move(args));
 }
 
 void PlatformView::SetSemanticsEnabled(bool enabled) {
-  blink::Threads::UI()->PostTask([ engine = engine_->GetWeakPtr(), enabled ] {
-    if (engine)
-      engine->SetSemanticsEnabled(enabled);
-  });
+  delegate_.OnPlatformViewSetSemanticsEnabled(enabled);
 }
 
-void PlatformView::NotifyCreated(std::unique_ptr<Surface> surface) {
-  NotifyCreated(std::move(surface), []() {});
+void PlatformView::SetAccessibilityFeatures(int32_t flags) {
+  delegate_.OnPlatformViewSetAccessibilityFeatures(flags);
 }
 
-void PlatformView::NotifyCreated(std::unique_ptr<Surface> surface,
-                                 fxl::Closure caller_continuation) {
-  fxl::AutoResetWaitableEvent latch;
+void PlatformView::SetViewportMetrics(const ViewportMetrics& metrics) {
+  delegate_.OnPlatformViewSetViewportMetrics(metrics);
+}
 
-  auto ui_continuation = fxl::MakeCopyable([
-    this,                          //
-    surface = std::move(surface),  //
-    caller_continuation,           //
-    &latch
-  ]() mutable {
-    auto gpu_continuation = fxl::MakeCopyable([
-      this,                          //
-      surface = std::move(surface),  //
-      caller_continuation,           //
-      &latch
-    ]() mutable {
-      // Runs on the GPU Thread. So does the Caller Continuation.
-      rasterizer_->Setup(std::move(surface), caller_continuation, &latch);
-    });
-    // Runs on the UI Thread.
-    engine_->OnOutputSurfaceCreated(std::move(gpu_continuation));
-  });
+void PlatformView::NotifyCreated() {
+  std::unique_ptr<Surface> surface;
 
-  // Runs on the Platform Thread.
-  blink::Threads::UI()->PostTask(std::move(ui_continuation));
-
+  // Threading: We want to use the platform view on the non-platform thread.
+  // Using the weak pointer is illegal. But, we are going to introduce a latch
+  // so that the platform view is not collected till the surface is obtained.
+  auto* platform_view = this;
+  fml::ManualResetWaitableEvent latch;
+  fml::TaskRunner::RunNowOrPostTask(
+      task_runners_.GetGPUTaskRunner(), [platform_view, &surface, &latch]() {
+        surface = platform_view->CreateRenderingSurface();
+        latch.Signal();
+      });
   latch.Wait();
+  delegate_.OnPlatformViewCreated(std::move(surface));
 }
 
 void PlatformView::NotifyDestroyed() {
-  fxl::AutoResetWaitableEvent latch;
+  delegate_.OnPlatformViewDestroyed();
+}
 
-  auto engine_continuation = [this, &latch]() {
-    rasterizer_->Teardown(&latch);
+sk_sp<GrContext> PlatformView::CreateResourceContext() const {
+  FML_DLOG(WARNING) << "This platform does not setup the resource "
+                       "context on the IO thread for async texture uploads.";
+  return nullptr;
+}
+
+void PlatformView::ReleaseResourceContext() const {}
+
+PointerDataDispatcherMaker PlatformView::GetDispatcherMaker() {
+  return [](Animator& animator, RuntimeController& controller,
+            TaskRunners task_runners) {
+    return std::make_unique<DefaultPointerDataDispatcher>(animator, controller);
   };
-
-  blink::Threads::UI()->PostTask([this, engine_continuation]() {
-    engine_->OnOutputSurfaceDestroyed(engine_continuation);
-  });
-
-  latch.Wait();
 }
 
-std::weak_ptr<PlatformView> PlatformView::GetWeakPtr() {
-  return shared_from_this();
+fml::WeakPtr<PlatformView> PlatformView::GetWeakPtr() const {
+  return weak_factory_.GetWeakPtr();
 }
 
-VsyncWaiter* PlatformView::GetVsyncWaiter() {
-  if (!vsync_waiter_)
-    vsync_waiter_ = std::make_unique<VsyncWaiterFallback>();
-  return vsync_waiter_.get();
-}
+void PlatformView::UpdateSemantics(SemanticsNodeUpdates update,
+                                   CustomAccessibilityActionUpdates actions) {}
 
-void PlatformView::UpdateSemantics(std::vector<blink::SemanticsNode> update) {}
-
-void PlatformView::HandlePlatformMessage(
-    fxl::RefPtr<blink::PlatformMessage> message) {
+void PlatformView::HandlePlatformMessage(fml::RefPtr<PlatformMessage> message) {
   if (auto response = message->response())
     response->CompleteEmpty();
 }
 
-void PlatformView::RegisterTexture(std::shared_ptr<flow::Texture> texture) {
-  ASSERT_IS_PLATFORM_THREAD
-  blink::Threads::Gpu()->PostTask([this, texture]() {
-    rasterizer_->GetTextureRegistry().RegisterTexture(texture);
-  });
+void PlatformView::OnPreEngineRestart() const {}
+
+void PlatformView::RegisterTexture(std::shared_ptr<flutter::Texture> texture) {
+  delegate_.OnPlatformViewRegisterTexture(std::move(texture));
 }
 
 void PlatformView::UnregisterTexture(int64_t texture_id) {
-  ASSERT_IS_PLATFORM_THREAD
-  blink::Threads::Gpu()->PostTask([this, texture_id]() {
-    rasterizer_->GetTextureRegistry().UnregisterTexture(texture_id);
-  });
+  delegate_.OnPlatformViewUnregisterTexture(texture_id);
 }
 
 void PlatformView::MarkTextureFrameAvailable(int64_t texture_id) {
-  ASSERT_IS_PLATFORM_THREAD
-  blink::Threads::UI()->PostTask([this]() { engine_->ScheduleFrame(false); });
+  delegate_.OnPlatformViewMarkTextureFrameAvailable(texture_id);
 }
 
-void PlatformView::SetupResourceContextOnIOThread() {
-  fxl::AutoResetWaitableEvent latch;
-
-  blink::Threads::IO()->PostTask(
-      [this, &latch]() { SetupResourceContextOnIOThreadPerform(&latch); });
-
-  latch.Wait();
+std::unique_ptr<Surface> PlatformView::CreateRenderingSurface() {
+  // We have a default implementation because tests create a platform view but
+  // never a rendering surface.
+  FML_DCHECK(false) << "This platform does not provide a rendering surface but "
+                       "it was notified of surface rendering surface creation.";
+  return nullptr;
 }
 
-void PlatformView::SetupResourceContextOnIOThreadPerform(
-    fxl::AutoResetWaitableEvent* latch) {
-  std::unique_ptr<blink::ResourceContext> resourceContext =
-      blink::ResourceContext::Acquire();
-  if (resourceContext->Get() != nullptr) {
-    // The resource context was already setup. This could happen if platforms
-    // try to setup a context multiple times, or, if there are multiple platform
-    // views. In any case, there is nothing else to do. So just signal the
-    // latch.
-    latch->Signal();
+void PlatformView::SetNextFrameCallback(fml::closure closure) {
+  if (!closure) {
     return;
   }
 
-  bool current = ResourceContextMakeCurrent();
-
-  if (!current) {
-    FXL_DLOG(WARNING)
-        << "WARNING: Could not setup a context on the resource loader.";
-    latch->Signal();
-    return;
-  }
-
-  GrContextOptions options;
-  // There is currently a bug with doing GPU YUV to RGB conversions on the IO
-  // thread. The necessary work isn't being flushed or synchronized with the
-  // other threads correctly, so the textures end up blank.  For now, suppress
-  // that feature, which will cause texture uploads to do CPU YUV conversion.
-  options.fDisableGpuYUVConversion = true;
-
-  blink::ResourceContext::Set(GrContext::Create(
-      GrBackend::kOpenGL_GrBackend,
-      reinterpret_cast<GrBackendContext>(GrGLCreateNativeInterface()),
-      options));
-
-  // Do not cache textures created by the image decoder.  These textures should
-  // be deleted when they are no longer referenced by an SkImage.
-  if (resourceContext->Get())
-    resourceContext->Get()->setResourceCacheLimits(0, 0);
-
-  latch->Signal();
+  delegate_.OnPlatformViewSetNextFrameCallback(std::move(closure));
 }
 
-}  // namespace shell
+}  // namespace flutter

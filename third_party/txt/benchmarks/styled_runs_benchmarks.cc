@@ -14,13 +14,12 @@
  * limitations under the License.
  */
 
+#include "flutter/fml/command_line.h"
+#include "flutter/fml/logging.h"
+#include "flutter/third_party/txt/tests/txt_test_utils.h"
 #include "third_party/benchmark/include/benchmark/benchmark_api.h"
-
-#include "lib/fxl/command_line.h"
-#include "lib/fxl/logging.h"
 #include "txt/styled_runs.h"
 #include "txt/text_style.h"
-#include "utils.h"
 
 namespace txt {
 

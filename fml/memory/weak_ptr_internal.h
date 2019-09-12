@@ -1,12 +1,12 @@
-// Copyright 2016 The Fuchsia Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef FLUTTER_FML_MEMORY_WEAK_PTR_INTERNAL_H_
 #define FLUTTER_FML_MEMORY_WEAK_PTR_INTERNAL_H_
 
-#include "lib/fxl/macros.h"
-#include "lib/fxl/memory/ref_counted.h"
+#include "flutter/fml/macros.h"
+#include "flutter/fml/memory/ref_counted.h"
 
 namespace fml {
 namespace internal {
@@ -19,7 +19,7 @@ namespace internal {
 // This class in not thread-safe, though references may be released on any
 // thread (allowing weak pointers to be destroyed/reset/reassigned on any
 // thread).
-class FXL_EXPORT WeakPtrFlag : public fxl::RefCountedThreadSafe<WeakPtrFlag> {
+class WeakPtrFlag : public fml::RefCountedThreadSafe<WeakPtrFlag> {
  public:
   WeakPtrFlag();
 
@@ -32,7 +32,7 @@ class FXL_EXPORT WeakPtrFlag : public fxl::RefCountedThreadSafe<WeakPtrFlag> {
  private:
   bool is_valid_;
 
-  FXL_DISALLOW_COPY_AND_ASSIGN(WeakPtrFlag);
+  FML_DISALLOW_COPY_AND_ASSIGN(WeakPtrFlag);
 };
 
 }  // namespace internal

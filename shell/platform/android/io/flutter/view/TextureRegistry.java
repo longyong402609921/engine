@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,6 +6,7 @@ package io.flutter.view;
 
 import android.graphics.SurfaceTexture;
 
+// TODO(mattcarroll): re-evalute docs in this class and add nullability annotations.
 /**
  * Registry of backend textures used with a single {@link FlutterView} instance.
  * Entries may be embedded into the Flutter view using the

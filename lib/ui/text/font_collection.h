@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,35 +7,43 @@
 
 #include <memory>
 #include <vector>
-#include "flutter/assets/zip_asset_store.h"
-#include "lib/fxl/macros.h"
-#include "lib/fxl/memory/ref_ptr.h"
-#include "txt/asset_data_provider.h"
+
+#include "flutter/assets/asset_manager.h"
+#include "flutter/fml/macros.h"
+#include "flutter/fml/memory/ref_ptr.h"
 #include "txt/font_collection.h"
 
-namespace blink {
+namespace tonic {
+class DartLibraryNatives;
+}  // namespace tonic
+
+namespace flutter {
 
 class FontCollection {
  public:
-  static FontCollection& ForProcess();
-
-  std::shared_ptr<txt::FontCollection> GetFontCollection() const;
-
-  void RegisterFontsFromAssetStore(
-      fxl::RefPtr<blink::ZipAssetStore> asset_store);
-
-  void RegisterTestFonts();
-
- private:
-  std::shared_ptr<txt::FontCollection> collection_;
-
   FontCollection();
 
   ~FontCollection();
 
-  FXL_DISALLOW_COPY_AND_ASSIGN(FontCollection);
+  static void RegisterNatives(tonic::DartLibraryNatives* natives);
+
+  std::shared_ptr<txt::FontCollection> GetFontCollection() const;
+
+  void RegisterFonts(std::shared_ptr<AssetManager> asset_manager);
+
+  void RegisterTestFonts();
+
+  void LoadFontFromList(const uint8_t* font_data,
+                        int length,
+                        std::string family_name);
+
+ private:
+  std::shared_ptr<txt::FontCollection> collection_;
+  sk_sp<txt::DynamicFontManager> dynamic_font_manager_;
+
+  FML_DISALLOW_COPY_AND_ASSIGN(FontCollection);
 };
 
-}  // namespace blink
+}  // namespace flutter
 
 #endif  // FLUTTER_LIB_UI_TEXT_FONT_COLLECTION_H_

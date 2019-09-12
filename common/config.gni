@@ -1,4 +1,4 @@
-# Copyright 2014 The Chromium Authors. All rights reserved.
+# Copyright 2013 The Flutter Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -6,19 +6,31 @@ if (is_android) {
   import("//build/config/android/config.gni")
 }
 
+import("//build/fuchsia/sdk.gni")
+
 if (target_cpu == "arm" || target_cpu == "arm64") {
   import("//build/config/arm.gni")
 }
 
+if (is_ios || is_mac) {
+  if (using_fuchsia_sdk) {
+    import("//build/toolchain/clang.gni")
+  } else {
+    import("//build/toolchain/clang_toolchain.gni")
+  }
+}
+
 declare_args() {
-  # Enable asserts, even in release builds.
-  flutter_asserts_always_on = false
-
-  # Enable ahead-of-time compilation on platforms where AOT is optional.
-  flutter_aot = false
-
   # The runtime mode ("debug", "profile", or "release")
   flutter_runtime_mode = "debug"
+
+  # Whether to use the Skia text shaper module
+  flutter_enable_skshaper = false
+
+  # A copy of the enable_bitcode flag from build/toolchain/clang.gni.
+  # This needs to be mirrored here because build/toolchain/clang.gni does
+  # not exist in the Fuchsia source tree.
+  flutter_enable_bitcode = false
 }
 
 # feature_defines_list ---------------------------------------------------------
@@ -39,21 +51,10 @@ if (flutter_runtime_mode == "debug") {
   feature_defines_list += [ "FLUTTER_RUNTIME_MODE=0" ]
 }
 
-if (is_debug) {
-  # TODO(GYP) this should also be set when release_valgrind_build is set,
-  # but we don't have that flag in the GN build yet.
-  feature_defines_list += [ "WTF_USE_DYNAMIC_ANNOTATIONS=1" ]
+if (is_fuchsia && using_fuchsia_sdk) {
+  feature_defines_list += [ "FUCHSIA_SDK=1" ]
 }
 
-if (!is_mac) {
-  # Mac OS X has not implemented support for ENABLE(OPENTYPE_VERTICAL) yet.
-  feature_defines_list += [ "ENABLE_OPENTYPE_VERTICAL=1" ]
-}
-
-if (flutter_asserts_always_on) {
-  feature_defines_list += [ "ENABLE_ASSERT=1" ]
-}
-
-if (flutter_aot) {
-  feature_defines_list += [ "FLUTTER_AOT=1" ]
+if ((is_ios || is_mac) && defined(enable_bitcode)) {
+  flutter_enable_bitcode = enable_bitcode
 }

@@ -1,13 +1,12 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef FLUTTER_FML_MESSAGE_LOOP_H_
 #define FLUTTER_FML_MESSAGE_LOOP_H_
 
-#include "flutter/fml/task_observer.h"
-#include "lib/fxl/macros.h"
-#include "lib/fxl/tasks/task_runner.h"
+#include "flutter/fml/macros.h"
+#include "flutter/fml/task_runner.h"
 
 namespace fml {
 
@@ -16,6 +15,7 @@ class MessageLoopImpl;
 
 class MessageLoop {
  public:
+  FML_EMBEDDER_ONLY
   static MessageLoop& GetCurrent();
 
   bool IsValid() const;
@@ -24,11 +24,15 @@ class MessageLoop {
 
   void Terminate();
 
-  void AddTaskObserver(TaskObserver* observer);
+  void AddTaskObserver(intptr_t key, fml::closure callback);
 
-  void RemoveTaskObserver(TaskObserver* observer);
+  void RemoveTaskObserver(intptr_t key);
 
-  fxl::RefPtr<fxl::TaskRunner> GetTaskRunner() const;
+  fml::RefPtr<fml::TaskRunner> GetTaskRunner() const;
+
+  // Exposed for the embedder shell which allows clients to poll for events
+  // instead of dedicating a thread to the message loop.
+  void RunExpiredTasksNow();
 
   static void EnsureInitializedForCurrentThread();
 
@@ -36,18 +40,20 @@ class MessageLoop {
 
   ~MessageLoop();
 
+  static TaskQueueId GetCurrentTaskQueueId();
+
  private:
   friend class TaskRunner;
   friend class MessageLoopImpl;
 
-  fxl::RefPtr<MessageLoopImpl> loop_;
-  fxl::RefPtr<fml::TaskRunner> task_runner_;
+  fml::RefPtr<MessageLoopImpl> loop_;
+  fml::RefPtr<fml::TaskRunner> task_runner_;
 
   MessageLoop();
 
-  fxl::RefPtr<MessageLoopImpl> GetLoopImpl() const;
+  fml::RefPtr<MessageLoopImpl> GetLoopImpl() const;
 
-  FXL_DISALLOW_COPY_AND_ASSIGN(MessageLoop);
+  FML_DISALLOW_COPY_AND_ASSIGN(MessageLoop);
 };
 
 }  // namespace fml

@@ -1,450 +1,271 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "flutter/shell/common/engine.h"
 
-#if OS(WIN)
-#include <io.h>
-#include <windows.h>
-#define access _access
-#define R_OK 0x4
-
-#ifndef S_ISDIR
-#define S_ISDIR(mode) (((mode)&S_IFMT) == S_IFDIR)
-#endif
-
-#ifndef S_ISREG
-#define S_ISREG(mode) (((mode)&S_IFMT) == S_IFREG)
-#endif
-
-#else
-#include <dlfcn.h>
-#include <sys/mman.h>
-#include <unistd.h>
-#endif  // OS(WIN)
-
-#include <fcntl.h>
-#include <sys/stat.h>
 #include <memory>
+#include <string>
 #include <utility>
+#include <vector>
 
-#include "flutter/assets/directory_asset_bundle.h"
-#include "flutter/assets/unzipper_provider.h"
-#include "flutter/assets/zip_asset_store.h"
 #include "flutter/common/settings.h"
-#include "flutter/common/threads.h"
-#include "flutter/glue/trace_event.h"
+#include "flutter/fml/eintr_wrapper.h"
+#include "flutter/fml/file.h"
+#include "flutter/fml/make_copyable.h"
+#include "flutter/fml/paths.h"
+#include "flutter/fml/trace_event.h"
+#include "flutter/fml/unique_fd.h"
 #include "flutter/lib/snapshot/snapshot.h"
 #include "flutter/lib/ui/text/font_collection.h"
-#include "flutter/runtime/asset_font_selector.h"
-#include "flutter/runtime/dart_controller.h"
-#include "flutter/runtime/dart_init.h"
-#include "flutter/runtime/runtime_init.h"
-#include "flutter/runtime/test_font_selector.h"
 #include "flutter/shell/common/animator.h"
 #include "flutter/shell/common/platform_view.h"
-#include "flutter/sky/engine/public/web/Sky.h"
-#include "lib/fxl/files/eintr_wrapper.h"
-#include "lib/fxl/files/file.h"
-#include "lib/fxl/files/path.h"
-#include "lib/fxl/files/unique_fd.h"
-#include "lib/fxl/functional/make_copyable.h"
-#include "third_party/rapidjson/rapidjson/document.h"
+#include "flutter/shell/common/shell.h"
+#include "rapidjson/document.h"
+#include "third_party/dart/runtime/include/dart_tools_api.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkPictureRecorder.h"
 
-namespace shell {
-namespace {
+namespace flutter {
 
-constexpr char kAssetChannel[] = "flutter/assets";
-constexpr char kLifecycleChannel[] = "flutter/lifecycle";
-constexpr char kNavigationChannel[] = "flutter/navigation";
-constexpr char kLocalizationChannel[] = "flutter/localization";
-constexpr char kSettingsChannel[] = "flutter/settings";
+static constexpr char kAssetChannel[] = "flutter/assets";
+static constexpr char kLifecycleChannel[] = "flutter/lifecycle";
+static constexpr char kNavigationChannel[] = "flutter/navigation";
+static constexpr char kLocalizationChannel[] = "flutter/localization";
+static constexpr char kSettingsChannel[] = "flutter/settings";
+static constexpr char kIsolateChannel[] = "flutter/isolate";
 
-#if OS(WIN)
-void FindAndReplaceInPlace(std::string& str,
-                           const std::string& findStr,
-                           const std::string& replaceStr) {
-  size_t pos = 0;
-  while ((pos = str.find(findStr, pos)) != std::string::npos) {
-    str.replace(pos, findStr.length(), replaceStr);
-    pos += replaceStr.length();
-  }
-}
-#endif
-
-std::string SanitizePath(const std::string& path) {
-#if OS(WIN)
-  std::string sanitized = path;
-  FindAndReplaceInPlace(sanitized, "\\\\", "/");
-  if ((sanitized.length() > 2) && (sanitized[1] == ':')) {
-    // Path begins with a drive letter.
-    sanitized = '/' + sanitized;
-  }
-  return sanitized;
-#else
-  return path;
-#endif
-}
-
-bool PathExists(const std::string& path) {
-  return access(path.c_str(), R_OK) == 0;
-}
-
-std::string FindPackagesPath(const std::string& main_dart) {
-  std::string directory = files::GetDirectoryName(main_dart);
-  std::string packages_path = directory + "/.packages";
-  if (!PathExists(packages_path)) {
-    directory = files::GetDirectoryName(directory);
-    packages_path = directory + "/.packages";
-    if (!PathExists(packages_path))
-      packages_path = std::string();
-  }
-  return packages_path;
-}
-
-std::string GetScriptUriFromPath(const std::string& path) {
-  return "file://" + SanitizePath(path);
-}
-
-}  // namespace
-
-Engine::Engine(PlatformView* platform_view)
-    : platform_view_(platform_view->GetWeakPtr()),
-      animator_(std::make_unique<Animator>(
-          platform_view->rasterizer().GetWeakRasterizerPtr(),
-          platform_view->GetVsyncWaiter(),
-          this)),
-      load_script_error_(tonic::kNoError),
-      user_settings_data_("{}"),
-      activity_running_(false),
+Engine::Engine(Delegate& delegate,
+               PointerDataDispatcherMaker& dispatcher_maker,
+               DartVM& vm,
+               fml::RefPtr<const DartSnapshot> isolate_snapshot,
+               fml::RefPtr<const DartSnapshot> shared_snapshot,
+               TaskRunners task_runners,
+               Settings settings,
+               std::unique_ptr<Animator> animator,
+               fml::WeakPtr<IOManager> io_manager)
+    : delegate_(delegate),
+      settings_(std::move(settings)),
+      animator_(std::move(animator)),
+      activity_running_(true),
       have_surface_(false),
-      weak_factory_(this) {}
+      image_decoder_(task_runners,
+                     vm.GetConcurrentWorkerTaskRunner(),
+                     io_manager),
+      weak_factory_(this) {
+  // Runtime controller is initialized here because it takes a reference to this
+  // object as its delegate. The delegate may be called in the constructor and
+  // we want to be fully initilazed by that point.
+  runtime_controller_ = std::make_unique<RuntimeController>(
+      *this,                                 // runtime delegate
+      &vm,                                   // VM
+      std::move(isolate_snapshot),           // isolate snapshot
+      std::move(shared_snapshot),            // shared snapshot
+      task_runners,                          // task runners
+      std::move(io_manager),                 // io manager
+      image_decoder_.GetWeakPtr(),           // image decoder
+      settings_.advisory_script_uri,         // advisory script uri
+      settings_.advisory_script_entrypoint,  // advisory script entrypoint
+      settings_.idle_notification_callback,  // idle notification callback
+      settings_.isolate_create_callback,     // isolate create callback
+      settings_.isolate_shutdown_callback    // isolate shutdown callback
+  );
 
-Engine::~Engine() {}
-
-void Engine::set_rasterizer(fml::WeakPtr<Rasterizer> rasterizer) {
-  animator_->set_rasterizer(rasterizer);
+  pointer_data_dispatcher_ = dispatcher_maker(*animator_, *runtime_controller_,
+                                              std::move(task_runners));
 }
 
-fml::WeakPtr<Engine> Engine::GetWeakPtr() {
+Engine::~Engine() = default;
+
+float Engine::GetDisplayRefreshRate() const {
+  return animator_->GetDisplayRefreshRate();
+}
+
+fml::WeakPtr<Engine> Engine::GetWeakPtr() const {
   return weak_factory_.GetWeakPtr();
 }
 
-#if !FLUTTER_AOT
-#elif OS(IOS)
-#elif OS(ANDROID)
-// TODO(bkonyi): do we even get here for Windows?
-static const uint8_t* MemMapSnapshot(const std::string& aot_snapshot_path,
-                                     const std::string& default_file_name,
-                                     const std::string& settings_file_name,
-                                     bool executable) {
-  std::string asset_path;
-  if (settings_file_name.empty()) {
-    asset_path = aot_snapshot_path + "/" + default_file_name;
-  } else {
-    asset_path = aot_snapshot_path + "/" + settings_file_name;
+bool Engine::UpdateAssetManager(
+    std::shared_ptr<AssetManager> new_asset_manager) {
+  if (asset_manager_ == new_asset_manager) {
+    return false;
   }
 
-#if OS(WIN)
-  HANDLE file_handle_ =
-      CreateFileA(reinterpret_cast<LPCSTR>(path.c_str()), GENERIC_READ,
-                  FILE_SHARE_READ, nullptr, OPEN_EXISTING,
-                  FILE_ATTRIBUTE_NORMAL | FILE_FLAG_RANDOM_ACCESS, nullptr);
+  asset_manager_ = new_asset_manager;
 
-  if (file_handle_ == INVALID_HANDLE_VALUE) {
-    return;
+  if (!asset_manager_) {
+    return false;
   }
 
-  size_ = GetFileSize(file_handle_, nullptr);
-  if (size_ == INVALID_FILE_SIZE) {
-    size_ = 0;
-    return;
+  // Using libTXT as the text engine.
+  font_collection_.RegisterFonts(asset_manager_);
+
+  if (settings_.use_test_fonts) {
+    font_collection_.RegisterTestFonts();
   }
 
-  int mapping_flags = executable ? PAGE_EXECUTE_READ : PAGE_READONLY;
-  mapping_handle_ = CreateFileMapping(file_handle_, nullptr, mapping_flags, 0,
-                                      size_, nullptr);
-
-  CloseHandle(file_handle_);
-
-  if (mapping_handle_ == INVALID_HANDLE_VALUE) {
-    return;
-  }
-
-  int access_flags = FILE_MAP_READ;
-  if (executable) {
-    access_flags |= FILE_MAP_EXECUTE;
-  }
-  auto mapping = MapViewOfFile(mapping_handle_, access_flags, 0, 0, size_);
-
-  if (mapping == INVALID_HANDLE_VALUE) {
-    CloseHandle(mapping_handle_);
-    mapping_handle_ = INVALID_HANDLE_VALUE;
-    return;
-  }
-
-  void* symbol = static_cast<void*>(mapping);
-  if (symbol == NULL) {
-    return nullptr;
-  }
-#else
-  struct stat info;
-  if (stat(asset_path.c_str(), &info) < 0) {
-    return nullptr;
-  }
-  int64_t asset_size = info.st_size;
-
-  fxl::UniqueFD fd(HANDLE_EINTR(open(asset_path.c_str(), O_RDONLY)));
-  if (fd.get() == -1) {
-    return nullptr;
-  }
-
-  int mmap_flags = PROT_READ;
-  if (executable)
-    mmap_flags |= PROT_EXEC;
-
-  void* symbol = mmap(NULL, asset_size, mmap_flags, MAP_PRIVATE, fd.get(), 0);
-  if (symbol == MAP_FAILED) {
-    return nullptr;
-  }
-#endif
-  return reinterpret_cast<const uint8_t*>(symbol);
+  return true;
 }
-#endif
 
-static const uint8_t* default_isolate_snapshot_data = nullptr;
-static const uint8_t* default_isolate_snapshot_instr = nullptr;
-
-void Engine::Init(const std::string& bundle_path) {
-  const uint8_t* vm_snapshot_data;
-  const uint8_t* vm_snapshot_instr;
-#if !FLUTTER_AOT
-  vm_snapshot_data = ::kDartVmSnapshotData;
-  vm_snapshot_instr = ::kDartVmSnapshotInstructions;
-  default_isolate_snapshot_data = ::kDartIsolateCoreSnapshotData;
-  default_isolate_snapshot_instr = ::kDartIsolateCoreSnapshotInstructions;
-#elif OS(IOS)
-  const char* kDartApplicationLibraryPath = "App.framework/App";
-  const char* application_library_path = kDartApplicationLibraryPath;
-  const blink::Settings& settings = blink::Settings::Get();
-  const std::string& application_library_path_setting =
-      settings.application_library_path;
-  if (!application_library_path_setting.empty()) {
-    application_library_path = application_library_path_setting.c_str();
+bool Engine::Restart(RunConfiguration configuration) {
+  TRACE_EVENT0("flutter", "Engine::Restart");
+  if (!configuration.IsValid()) {
+    FML_LOG(ERROR) << "Engine run configuration was invalid.";
+    return false;
   }
-  dlerror();  // clear previous errors on thread
-  void* library_handle = dlopen(application_library_path, RTLD_NOW);
-  const char* err = dlerror();
-  if (err != nullptr) {
-    FXL_LOG(FATAL) << "dlopen failed: " << err;
-  }
-  vm_snapshot_data = reinterpret_cast<const uint8_t*>(
-      dlsym(library_handle, "kDartVmSnapshotData"));
-  vm_snapshot_instr = reinterpret_cast<const uint8_t*>(
-      dlsym(library_handle, "kDartVmSnapshotInstructions"));
-  default_isolate_snapshot_data = reinterpret_cast<const uint8_t*>(
-      dlsym(library_handle, "kDartIsolateSnapshotData"));
-  default_isolate_snapshot_instr = reinterpret_cast<const uint8_t*>(
-      dlsym(library_handle, "kDartIsolateSnapshotInstructions"));
-#elif OS(ANDROID) || OS(WIN)
-  const blink::Settings& settings = blink::Settings::Get();
-  const std::string& aot_shared_library_path = settings.aot_shared_library_path;
-  const std::string& aot_snapshot_path = settings.aot_snapshot_path;
+  delegate_.OnPreEngineRestart();
+  runtime_controller_ = runtime_controller_->Clone();
+  UpdateAssetManager(nullptr);
+  return Run(std::move(configuration)) == Engine::RunStatus::Success;
+}
 
-  if (!aot_shared_library_path.empty()) {
-    FXL_CHECK(aot_snapshot_path.empty());
-    dlerror();  // clear previous errors on thread
-    void* library_handle = dlopen(aot_shared_library_path.c_str(), RTLD_NOW);
-    const char* err = dlerror();
-    if (err != nullptr) {
-      FXL_LOG(FATAL) << "dlopen failed: " << err;
+Engine::RunStatus Engine::Run(RunConfiguration configuration) {
+  if (!configuration.IsValid()) {
+    FML_LOG(ERROR) << "Engine run configuration was invalid.";
+    return RunStatus::Failure;
+  }
+
+  auto isolate_launch_status =
+      PrepareAndLaunchIsolate(std::move(configuration));
+  if (isolate_launch_status == Engine::RunStatus::Failure) {
+    FML_LOG(ERROR) << "Engine not prepare and launch isolate.";
+    return isolate_launch_status;
+  } else if (isolate_launch_status ==
+             Engine::RunStatus::FailureAlreadyRunning) {
+    return isolate_launch_status;
+  }
+
+  std::shared_ptr<DartIsolate> isolate =
+      runtime_controller_->GetRootIsolate().lock();
+
+  bool isolate_running =
+      isolate && isolate->GetPhase() == DartIsolate::Phase::Running;
+
+  if (isolate_running) {
+    tonic::DartState::Scope scope(isolate.get());
+
+    if (settings_.root_isolate_create_callback) {
+      settings_.root_isolate_create_callback();
     }
-    vm_snapshot_data = reinterpret_cast<const uint8_t*>(
-        dlsym(library_handle, "_kDartVmSnapshotData"));
-    vm_snapshot_instr = reinterpret_cast<const uint8_t*>(
-        dlsym(library_handle, "_kDartVmSnapshotInstructions"));
-    default_isolate_snapshot_data = reinterpret_cast<const uint8_t*>(
-        dlsym(library_handle, "_kDartIsolateSnapshotData"));
-    default_isolate_snapshot_instr = reinterpret_cast<const uint8_t*>(
-        dlsym(library_handle, "_kDartIsolateSnapshotInstructions"));
-  } else {
-    FXL_CHECK(!aot_snapshot_path.empty());
-    vm_snapshot_data =
-        MemMapSnapshot(aot_snapshot_path, "vm_snapshot_data",
-                       settings.aot_vm_snapshot_data_filename, false);
-    vm_snapshot_instr =
-        MemMapSnapshot(aot_snapshot_path, "vm_snapshot_instr",
-                       settings.aot_vm_snapshot_instr_filename, true);
-    default_isolate_snapshot_data =
-        MemMapSnapshot(aot_snapshot_path, "isolate_snapshot_data",
-                       settings.aot_isolate_snapshot_data_filename, false);
-    default_isolate_snapshot_instr =
-        MemMapSnapshot(aot_snapshot_path, "isolate_snapshot_instr",
-                       settings.aot_isolate_snapshot_instr_filename, true);
-  }
-#else
-#error Unknown OS
-#endif
 
-  std::string flx_path = bundle_path;
-  struct stat stat_result = {};
-  if (::stat(flx_path.c_str(), &stat_result) == 0) {
-    if (S_ISDIR(stat_result.st_mode)) {
-      flx_path = files::GetDirectoryName(bundle_path) + "/app.flx";
+    if (settings_.root_isolate_shutdown_callback) {
+      isolate->AddIsolateShutdownCallback(
+          settings_.root_isolate_shutdown_callback);
+    }
+
+    std::string service_id = isolate->GetServiceId();
+    fml::RefPtr<PlatformMessage> service_id_message =
+        fml::MakeRefCounted<flutter::PlatformMessage>(
+            kIsolateChannel,
+            std::vector<uint8_t>(service_id.begin(), service_id.end()),
+            nullptr);
+    HandlePlatformMessage(service_id_message);
+  }
+
+  return isolate_running ? Engine::RunStatus::Success
+                         : Engine::RunStatus::Failure;
+}
+
+Engine::RunStatus Engine::PrepareAndLaunchIsolate(
+    RunConfiguration configuration) {
+  TRACE_EVENT0("flutter", "Engine::PrepareAndLaunchIsolate");
+
+  UpdateAssetManager(configuration.GetAssetManager());
+
+  auto isolate_configuration = configuration.TakeIsolateConfiguration();
+
+  std::shared_ptr<DartIsolate> isolate =
+      runtime_controller_->GetRootIsolate().lock();
+
+  if (!isolate) {
+    return RunStatus::Failure;
+  }
+
+  // This can happen on iOS after a plugin shows a native window and returns to
+  // the Flutter ViewController.
+  if (isolate->GetPhase() == DartIsolate::Phase::Running) {
+    FML_DLOG(WARNING) << "Isolate was already running!";
+    return RunStatus::FailureAlreadyRunning;
+  }
+
+  if (!isolate_configuration->PrepareIsolate(*isolate)) {
+    FML_LOG(ERROR) << "Could not prepare to run the isolate.";
+    return RunStatus::Failure;
+  }
+
+  if (configuration.GetEntrypointLibrary().empty()) {
+    if (!isolate->Run(configuration.GetEntrypoint(),
+                      settings_.dart_entrypoint_args)) {
+      FML_LOG(ERROR) << "Could not run the isolate.";
+      return RunStatus::Failure;
+    }
+  } else {
+    if (!isolate->RunFromLibrary(configuration.GetEntrypointLibrary(),
+                                 configuration.GetEntrypoint(),
+                                 settings_.dart_entrypoint_args)) {
+      FML_LOG(ERROR) << "Could not run the isolate.";
+      return RunStatus::Failure;
     }
   }
 
-  blink::InitRuntime(vm_snapshot_data, vm_snapshot_instr,
-                     default_isolate_snapshot_data,
-                     default_isolate_snapshot_instr, flx_path);
+  return RunStatus::Success;
 }
 
-const std::string Engine::main_entrypoint_ = "main";
-
-void Engine::RunBundle(const std::string& bundle_path,
-                       const std::string& entrypoint,
-                       bool reuse_runtime_controller) {
-  TRACE_EVENT0("flutter", "Engine::RunBundle");
-  ConfigureAssetBundle(bundle_path);
-  ConfigureRuntime(GetScriptUriFromPath(bundle_path), reuse_runtime_controller);
-
-  if (blink::IsRunningPrecompiledCode()) {
-    runtime_->dart_controller()->RunFromPrecompiledSnapshot(entrypoint);
-  } else {
-    std::vector<uint8_t> kernel;
-    if (GetAssetAsBuffer(blink::kKernelAssetKey, &kernel)) {
-      runtime_->dart_controller()->RunFromKernel(kernel, entrypoint);
-      return;
-    }
-    std::vector<uint8_t> snapshot;
-    if (!GetAssetAsBuffer(blink::kSnapshotAssetKey, &snapshot))
-      return;
-    runtime_->dart_controller()->RunFromScriptSnapshot(
-        snapshot.data(), snapshot.size(), entrypoint);
-  }
-}
-
-void Engine::RunBundleAndSnapshot(const std::string& bundle_path,
-                                  const std::string& snapshot_override,
-                                  const std::string& entrypoint,
-                                  bool reuse_runtime_controller) {
-  TRACE_EVENT0("flutter", "Engine::RunBundleAndSnapshot");
-  if (snapshot_override.empty()) {
-    RunBundle(bundle_path, entrypoint, reuse_runtime_controller);
-    return;
-  }
-  ConfigureAssetBundle(bundle_path);
-  ConfigureRuntime(GetScriptUriFromPath(bundle_path), reuse_runtime_controller);
-  if (blink::IsRunningPrecompiledCode()) {
-    runtime_->dart_controller()->RunFromPrecompiledSnapshot(entrypoint);
-  } else {
-    std::vector<uint8_t> snapshot;
-    if (!files::ReadFileToVector(snapshot_override, &snapshot))
-      return;
-    runtime_->dart_controller()->RunFromScriptSnapshot(
-        snapshot.data(), snapshot.size(), entrypoint);
-  }
-}
-
-void Engine::RunBundleAndSource(const std::string& bundle_path,
-                                const std::string& main,
-                                const std::string& packages,
-                                bool reuse_runtime_controller) {
-  TRACE_EVENT0("flutter", "Engine::RunBundleAndSource");
-  FXL_CHECK(!blink::IsRunningPrecompiledCode())
-      << "Cannot run from source in a precompiled build.";
-  std::string packages_path = packages;
-  if (packages_path.empty())
-    packages_path = FindPackagesPath(main);
-
-  if (!bundle_path.empty())
-    ConfigureAssetBundle(bundle_path);
-
-  ConfigureRuntime(GetScriptUriFromPath(bundle_path), reuse_runtime_controller);
-
-  if (blink::GetKernelPlatformBinary() != nullptr) {
-    std::vector<uint8_t> kernel;
-    if (!files::ReadFileToVector(main, &kernel)) {
-      load_script_error_ = tonic::kUnknownErrorType;
-    }
-    load_script_error_ = runtime_->dart_controller()->RunFromKernel(kernel);
-  } else {
-    load_script_error_ =
-        runtime_->dart_controller()->RunFromSource(main, packages_path);
-  }
-}
-
-void Engine::BeginFrame(fxl::TimePoint frame_time) {
+void Engine::BeginFrame(fml::TimePoint frame_time) {
   TRACE_EVENT0("flutter", "Engine::BeginFrame");
-  if (runtime_)
-    runtime_->BeginFrame(frame_time);
+  runtime_controller_->BeginFrame(frame_time);
+}
+
+void Engine::ReportTimings(std::vector<int64_t> timings) {
+  TRACE_EVENT0("flutter", "Engine::ReportTimings");
+  runtime_controller_->ReportTimings(std::move(timings));
 }
 
 void Engine::NotifyIdle(int64_t deadline) {
-  TRACE_EVENT0("flutter", "Engine::NotifyIdle");
-  if (runtime_)
-    runtime_->NotifyIdle(deadline);
+  auto trace_event = std::to_string(deadline - Dart_TimelineGetMicros());
+  TRACE_EVENT1("flutter", "Engine::NotifyIdle", "deadline_now_delta",
+               trace_event.c_str());
+  runtime_controller_->NotifyIdle(deadline);
 }
 
-void Engine::RunFromSource(const std::string& main,
-                           const std::string& packages,
-                           const std::string& bundle_path) {
-  RunBundleAndSource(bundle_path, main, packages);
+std::pair<bool, uint32_t> Engine::GetUIIsolateReturnCode() {
+  return runtime_controller_->GetRootIsolateReturnCode();
 }
 
 Dart_Port Engine::GetUIIsolateMainPort() {
-  if (!runtime_)
-    return ILLEGAL_PORT;
-  return runtime_->GetMainPort();
+  return runtime_controller_->GetMainPort();
 }
 
 std::string Engine::GetUIIsolateName() {
-  if (!runtime_) {
-    return "";
-  }
-  return runtime_->GetIsolateName();
+  return runtime_controller_->GetIsolateName();
 }
 
 bool Engine::UIIsolateHasLivePorts() {
-  if (!runtime_)
-    return false;
-  return runtime_->HasLivePorts();
+  return runtime_controller_->HasLivePorts();
 }
 
 tonic::DartErrorHandleType Engine::GetUIIsolateLastError() {
-  if (!runtime_)
-    return tonic::kNoError;
-  return runtime_->GetLastError();
+  return runtime_controller_->GetLastError();
 }
 
-tonic::DartErrorHandleType Engine::GetLoadScriptError() {
-  return load_script_error_;
-}
-
-void Engine::OnOutputSurfaceCreated(const fxl::Closure& gpu_continuation) {
-  blink::Threads::Gpu()->PostTask(gpu_continuation);
+void Engine::OnOutputSurfaceCreated() {
   have_surface_ = true;
   StartAnimatorIfPossible();
-  if (runtime_)
-    ScheduleFrame();
+  ScheduleFrame();
 }
 
-void Engine::OnOutputSurfaceDestroyed(const fxl::Closure& gpu_continuation) {
+void Engine::OnOutputSurfaceDestroyed() {
   have_surface_ = false;
   StopAnimator();
-  blink::Threads::Gpu()->PostTask(gpu_continuation);
 }
 
-void Engine::SetViewportMetrics(const blink::ViewportMetrics& metrics) {
+void Engine::SetViewportMetrics(const ViewportMetrics& metrics) {
   bool dimensions_changed =
       viewport_metrics_.physical_height != metrics.physical_height ||
-      viewport_metrics_.physical_width != metrics.physical_width;
+      viewport_metrics_.physical_width != metrics.physical_width ||
+      viewport_metrics_.physical_depth != metrics.physical_depth;
   viewport_metrics_ = metrics;
-  if (runtime_)
-    runtime_->SetViewportMetrics(viewport_metrics_);
+  runtime_controller_->SetViewportMetrics(viewport_metrics_);
   if (animator_) {
     if (dimensions_changed)
       animator_->SetDimensionChangePending();
@@ -453,8 +274,7 @@ void Engine::SetViewportMetrics(const blink::ViewportMetrics& metrics) {
   }
 }
 
-void Engine::DispatchPlatformMessage(
-    fxl::RefPtr<blink::PlatformMessage> message) {
+void Engine::DispatchPlatformMessage(fml::RefPtr<PlatformMessage> message) {
   if (message->channel() == kLifecycleChannel) {
     if (HandleLifecyclePlatformMessage(message.get()))
       return;
@@ -466,17 +286,22 @@ void Engine::DispatchPlatformMessage(
     return;
   }
 
-  if (runtime_) {
-    runtime_->DispatchPlatformMessage(std::move(message));
+  if (runtime_controller_->IsRootIsolateRunning() &&
+      runtime_controller_->DispatchPlatformMessage(std::move(message))) {
     return;
   }
 
   // If there's no runtime_, we may still need to set the initial route.
-  if (message->channel() == kNavigationChannel)
+  if (message->channel() == kNavigationChannel) {
     HandleNavigationPlatformMessage(std::move(message));
+    return;
+  }
+
+  FML_DLOG(WARNING) << "Dropping platform message on channel: "
+                    << message->channel();
 }
 
-bool Engine::HandleLifecyclePlatformMessage(blink::PlatformMessage* message) {
+bool Engine::HandleLifecyclePlatformMessage(PlatformMessage* message) {
   const auto& data = message->data();
   std::string state(reinterpret_cast<const char*>(data.data()), data.size());
   if (state == "AppLifecycleState.paused" ||
@@ -495,12 +320,13 @@ bool Engine::HandleLifecyclePlatformMessage(blink::PlatformMessage* message) {
   if (state == "AppLifecycleState.resumed" && have_surface_) {
     ScheduleFrame();
   }
+  runtime_controller_->SetLifecycleState(state);
+  // Always forward these messages to the framework by returning false.
   return false;
 }
 
 bool Engine::HandleNavigationPlatformMessage(
-    fxl::RefPtr<blink::PlatformMessage> message) {
-  FXL_DCHECK(!runtime_);
+    fml::RefPtr<PlatformMessage> message) {
   const auto& data = message->data();
 
   rapidjson::Document document;
@@ -516,8 +342,7 @@ bool Engine::HandleNavigationPlatformMessage(
   return true;
 }
 
-bool Engine::HandleLocalizationPlatformMessage(
-    blink::PlatformMessage* message) {
+bool Engine::HandleLocalizationPlatformMessage(PlatformMessage* message) {
   const auto& data = message->data();
 
   rapidjson::Document document;
@@ -533,105 +358,54 @@ bool Engine::HandleLocalizationPlatformMessage(
   if (args == root.MemberEnd() || !args->value.IsArray())
     return false;
 
-  const auto& language = args->value[0];
-  const auto& country = args->value[1];
-
-  if (!language.IsString() || !country.IsString())
+  const size_t strings_per_locale = 4;
+  if (args->value.Size() % strings_per_locale != 0)
     return false;
+  std::vector<std::string> locale_data;
+  for (size_t locale_index = 0; locale_index < args->value.Size();
+       locale_index += strings_per_locale) {
+    if (!args->value[locale_index].IsString() ||
+        !args->value[locale_index + 1].IsString())
+      return false;
+    locale_data.push_back(args->value[locale_index].GetString());
+    locale_data.push_back(args->value[locale_index + 1].GetString());
+    locale_data.push_back(args->value[locale_index + 2].GetString());
+    locale_data.push_back(args->value[locale_index + 3].GetString());
+  }
 
-  language_code_ = language.GetString();
-  country_code_ = country.GetString();
-  if (runtime_)
-    runtime_->SetLocale(language_code_, country_code_);
-  return true;
+  return runtime_controller_->SetLocales(locale_data);
 }
 
-void Engine::HandleSettingsPlatformMessage(blink::PlatformMessage* message) {
+void Engine::HandleSettingsPlatformMessage(PlatformMessage* message) {
   const auto& data = message->data();
   std::string jsonData(reinterpret_cast<const char*>(data.data()), data.size());
-  user_settings_data_ = jsonData;
-  if (runtime_) {
-    runtime_->SetUserSettingsData(user_settings_data_);
-    if (have_surface_)
-      ScheduleFrame();
+  if (runtime_controller_->SetUserSettingsData(std::move(jsonData)) &&
+      have_surface_) {
+    ScheduleFrame();
   }
 }
 
-void Engine::DispatchPointerDataPacket(const PointerDataPacket& packet) {
-  if (runtime_)
-    runtime_->DispatchPointerDataPacket(packet);
+void Engine::DispatchPointerDataPacket(
+    std::unique_ptr<PointerDataPacket> packet,
+    uint64_t trace_flow_id) {
+  TRACE_EVENT0("flutter", "Engine::DispatchPointerDataPacket");
+  TRACE_FLOW_STEP("flutter", "PointerEvent", trace_flow_id);
+  pointer_data_dispatcher_->DispatchPacket(std::move(packet), trace_flow_id);
 }
 
 void Engine::DispatchSemanticsAction(int id,
-                                     blink::SemanticsAction action,
+                                     SemanticsAction action,
                                      std::vector<uint8_t> args) {
-  if (runtime_)
-    runtime_->DispatchSemanticsAction(id, action, std::move(args));
+  runtime_controller_->DispatchSemanticsAction(id, action, std::move(args));
 }
 
 void Engine::SetSemanticsEnabled(bool enabled) {
-  semantics_enabled_ = enabled;
-  if (runtime_)
-    runtime_->SetSemanticsEnabled(semantics_enabled_);
+  runtime_controller_->SetSemanticsEnabled(enabled);
 }
 
-void Engine::ConfigureAssetBundle(const std::string& path) {
-  struct stat stat_result = {};
-
-  directory_asset_bundle_.reset();
-  // TODO(abarth): We should reset asset_store_ as well, but that might break
-  // custom font loading in hot reload.
-
-  if (::stat(path.c_str(), &stat_result) != 0) {
-    FXL_LOG(INFO) << "Could not configure asset bundle at path: " << path;
-    return;
-  }
-
-  std::string flx_path;
-  if (S_ISDIR(stat_result.st_mode)) {
-    directory_asset_bundle_ =
-        std::make_unique<blink::DirectoryAssetBundle>(path);
-    flx_path = files::GetDirectoryName(path) + "/app.flx";
-  } else if (S_ISREG(stat_result.st_mode)) {
-    flx_path = path;
-  }
-
-  if (PathExists(flx_path)) {
-    asset_store_ = fxl::MakeRefCounted<blink::ZipAssetStore>(
-        blink::GetUnzipperProviderForPath(flx_path));
-  }
+void Engine::SetAccessibilityFeatures(int32_t flags) {
+  runtime_controller_->SetAccessibilityFeatures(flags);
 }
-
-void Engine::ConfigureRuntime(const std::string& script_uri,
-                              bool reuse_runtime_controller) {
-  if (runtime_ && reuse_runtime_controller) {
-    return;
-  }
-  runtime_ = blink::RuntimeController::Create(this);
-  runtime_->CreateDartController(std::move(script_uri),
-                                 default_isolate_snapshot_data,
-                                 default_isolate_snapshot_instr);
-  runtime_->SetViewportMetrics(viewport_metrics_);
-  runtime_->SetLocale(language_code_, country_code_);
-  runtime_->SetUserSettingsData(user_settings_data_);
-  runtime_->SetSemanticsEnabled(semantics_enabled_);
-}
-
-void Engine::DidCreateMainIsolate(Dart_Isolate isolate) {
-  if (blink::Settings::Get().use_test_fonts) {
-    blink::TestFontSelector::Install();
-    if (!blink::Settings::Get().using_blink)
-      blink::FontCollection::ForProcess().RegisterTestFonts();
-  } else if (asset_store_) {
-    blink::AssetFontSelector::Install(asset_store_);
-    if (!blink::Settings::Get().using_blink) {
-      blink::FontCollection::ForProcess().RegisterFontsFromAssetStore(
-          asset_store_);
-    }
-  }
-}
-
-void Engine::DidCreateSecondaryIsolate(Dart_Isolate isolate) {}
 
 void Engine::StopAnimator() {
   animator_->Stop();
@@ -653,7 +427,7 @@ void Engine::ScheduleFrame(bool regenerate_layer_tree) {
   animator_->RequestFrame(regenerate_layer_tree);
 }
 
-void Engine::Render(std::unique_ptr<flow::LayerTree> layer_tree) {
+void Engine::Render(std::unique_ptr<flutter::LayerTree> layer_tree) {
   if (!layer_tree)
     return;
 
@@ -664,53 +438,55 @@ void Engine::Render(std::unique_ptr<flow::LayerTree> layer_tree) {
 
   layer_tree->set_frame_size(frame_size);
   animator_->Render(std::move(layer_tree));
+
+  pointer_data_dispatcher_->OnFrameLayerTreeReceived();
 }
 
-void Engine::UpdateSemantics(std::vector<blink::SemanticsNode> update) {
-  blink::Threads::Platform()->PostTask(fxl::MakeCopyable([
-    platform_view = platform_view_.lock(), update = std::move(update)
-  ]() mutable {
-    if (platform_view)
-      platform_view->UpdateSemantics(std::move(update));
-  }));
+void Engine::UpdateSemantics(SemanticsNodeUpdates update,
+                             CustomAccessibilityActionUpdates actions) {
+  delegate_.OnEngineUpdateSemantics(std::move(update), std::move(actions));
 }
 
-void Engine::HandlePlatformMessage(
-    fxl::RefPtr<blink::PlatformMessage> message) {
+void Engine::HandlePlatformMessage(fml::RefPtr<PlatformMessage> message) {
   if (message->channel() == kAssetChannel) {
     HandleAssetPlatformMessage(std::move(message));
-    return;
+  } else {
+    delegate_.OnEngineHandlePlatformMessage(std::move(message));
   }
-  blink::Threads::Platform()->PostTask([
-    platform_view = platform_view_.lock(), message = std::move(message)
-  ]() mutable {
-    if (platform_view)
-      platform_view->HandlePlatformMessage(std::move(message));
-  });
 }
 
-void Engine::HandleAssetPlatformMessage(
-    fxl::RefPtr<blink::PlatformMessage> message) {
-  fxl::RefPtr<blink::PlatformMessageResponse> response = message->response();
-  if (!response)
+void Engine::UpdateIsolateDescription(const std::string isolate_name,
+                                      int64_t isolate_port) {
+  delegate_.UpdateIsolateDescription(isolate_name, isolate_port);
+}
+
+void Engine::SetNeedsReportTimings(bool needs_reporting) {
+  delegate_.SetNeedsReportTimings(needs_reporting);
+}
+
+FontCollection& Engine::GetFontCollection() {
+  return font_collection_;
+}
+
+void Engine::HandleAssetPlatformMessage(fml::RefPtr<PlatformMessage> message) {
+  fml::RefPtr<PlatformMessageResponse> response = message->response();
+  if (!response) {
     return;
+  }
   const auto& data = message->data();
   std::string asset_name(reinterpret_cast<const char*>(data.data()),
                          data.size());
 
-  std::vector<uint8_t> asset_data;
-  if (GetAssetAsBuffer(asset_name, &asset_data)) {
-    response->Complete(std::move(asset_data));
-  } else {
-    response->CompleteEmpty();
+  if (asset_manager_) {
+    std::unique_ptr<fml::Mapping> asset_mapping =
+        asset_manager_->GetAsMapping(asset_name);
+    if (asset_mapping) {
+      response->Complete(std::move(asset_mapping));
+      return;
+    }
   }
+
+  response->CompleteEmpty();
 }
 
-bool Engine::GetAssetAsBuffer(const std::string& name,
-                              std::vector<uint8_t>* data) {
-  return (directory_asset_bundle_ &&
-          directory_asset_bundle_->GetAsBuffer(name, data)) ||
-         (asset_store_ && asset_store_->GetAsBuffer(name, data));
-}
-
-}  // namespace shell
+}  // namespace flutter

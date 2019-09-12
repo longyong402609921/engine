@@ -1,43 +1,29 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "flutter/shell/platform/darwin/ios/ios_surface.h"
 
-#include <flutter/shell/platform/darwin/ios/ios_surface_gl.h>
-#include <flutter/shell/platform/darwin/ios/ios_surface_software.h>
 #include <memory>
 
-@class CALayer;
-@class CAEAGLLayer;
+#include "flutter/shell/platform/darwin/ios/ios_surface_gl.h"
+#include "flutter/shell/platform/darwin/ios/ios_surface_software.h"
 
-namespace shell {
+namespace flutter {
 
-std::unique_ptr<IOSSurface> IOSSurface::Create(PlatformView::SurfaceConfig surface_config,
-                                               CALayer* layer) {
-  // Check if we can use OpenGL.
-  if ([layer isKindOfClass:[CAEAGLLayer class]]) {
-    return std::make_unique<IOSSurfaceGL>(surface_config, reinterpret_cast<CAEAGLLayer*>(layer));
-  }
+// The name of the Info.plist flag to enable the embedded iOS views preview.
+const char* const kEmbeddedViewsPreview = "io.flutter.embedded_views_preview";
 
-  // If we ever support the metal rendering API, a check for CAMetalLayer would
-  // go here.
-
-  // Finally, fallback to software rendering.
-  return std::make_unique<IOSSurfaceSoftware>(surface_config, layer);
+bool IsIosEmbeddedViewsPreviewEnabled() {
+  return [[[NSBundle mainBundle] objectForInfoDictionaryKey:@(kEmbeddedViewsPreview)] boolValue];
 }
 
-IOSSurface::IOSSurface(PlatformView::SurfaceConfig surface_config, CALayer* layer)
-    : surface_config_(surface_config), layer_([layer retain]) {}
+IOSSurface::IOSSurface(FlutterPlatformViewsController* platform_views_controller)
+    : platform_views_controller_(platform_views_controller) {}
 
 IOSSurface::~IOSSurface() = default;
 
-CALayer* IOSSurface::GetLayer() const {
-  return layer_;
+FlutterPlatformViewsController* IOSSurface::GetPlatformViewsController() {
+  return platform_views_controller_;
 }
-
-PlatformView::SurfaceConfig IOSSurface::GetSurfaceConfig() const {
-  return surface_config_;
-}
-
-}  // namespace shell
+}  // namespace flutter

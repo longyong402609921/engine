@@ -1,29 +1,27 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef FLUTTER_SHELL_PLATFORM_DARWIN_IOS_IOS_SURFACE_H_
 #define FLUTTER_SHELL_PLATFORM_DARWIN_IOS_IOS_SURFACE_H_
 
+#import "flutter/shell/platform/darwin/ios/framework/Source/FlutterPlatformViews_Internal.h"
+
+#include <memory>
+
+#include "flutter/fml/macros.h"
 #include "flutter/fml/platform/darwin/scoped_nsobject.h"
-#include "flutter/shell/common/platform_view.h"
-#include "lib/fxl/macros.h"
+#include "flutter/shell/common/surface.h"
 
-@class CALayer;
+namespace flutter {
 
-namespace shell {
+// Returns true if the app explicitly specified to use the iOS view embedding
+// mechanism which is still in a release preview.
+bool IsIosEmbeddedViewsPreviewEnabled();
 
 class IOSSurface {
  public:
-  static std::unique_ptr<IOSSurface> Create(
-      PlatformView::SurfaceConfig surface_config,
-      CALayer* layer);
-
-  IOSSurface(PlatformView::SurfaceConfig surface_config, CALayer* layer);
-
-  CALayer* GetLayer() const;
-
-  PlatformView::SurfaceConfig GetSurfaceConfig() const;
+  IOSSurface(FlutterPlatformViewsController* platform_views_controller);
 
   virtual ~IOSSurface();
 
@@ -33,15 +31,24 @@ class IOSSurface {
 
   virtual void UpdateStorageSizeIfNecessary() = 0;
 
-  virtual std::unique_ptr<Surface> CreateGPUSurface() = 0;
+  // Creates a GPU surface. If no GrContext is supplied and the rendering mode
+  // supports one, a new one will be created; otherwise, the software backend
+  // will be used.
+  //
+  // If a GrContext is supplied, creates a secondary surface.
+  virtual std::unique_ptr<Surface> CreateGPUSurface(
+      GrContext* gr_context = nullptr) = 0;
+
+ protected:
+  FlutterPlatformViewsController* GetPlatformViewsController();
+
+ private:
+  FlutterPlatformViewsController* platform_views_controller_;
 
  public:
-  PlatformView::SurfaceConfig surface_config_;
-  fml::scoped_nsobject<CALayer> layer_;
-
-  FXL_DISALLOW_COPY_AND_ASSIGN(IOSSurface);
+  FML_DISALLOW_COPY_AND_ASSIGN(IOSSurface);
 };
 
-}  // namespace shell
+}  // namespace flutter
 
 #endif  // FLUTTER_SHELL_PLATFORM_DARWIN_IOS_IOS_SURFACE_H_

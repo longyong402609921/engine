@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,77 +7,80 @@
 
 #include <memory>
 
+#include "flutter/fml/closure.h"
+#include "flutter/fml/macros.h"
 #include "flutter/fml/memory/weak_ptr.h"
+#include "flutter/fml/platform/darwin/scoped_nsobject.h"
 #include "flutter/shell/common/platform_view.h"
 #include "flutter/shell/platform/darwin/ios/framework/Headers/FlutterTexture.h"
+#include "flutter/shell/platform/darwin/ios/framework/Headers/FlutterViewController.h"
+#include "flutter/shell/platform/darwin/ios/framework/Source/FlutterView.h"
 #include "flutter/shell/platform/darwin/ios/framework/Source/accessibility_bridge.h"
 #include "flutter/shell/platform/darwin/ios/framework/Source/platform_message_router.h"
+#include "flutter/shell/platform/darwin/ios/ios_gl_context.h"
 #include "flutter/shell/platform/darwin/ios/ios_surface.h"
-#include "lib/fxl/functional/closure.h"
-#include "lib/fxl/macros.h"
 
-@class CALayer;
-@class UIView;
+@class FlutterViewController;
 
-namespace shell {
+namespace flutter {
 
-class PlatformViewIOS : public PlatformView {
+class PlatformViewIOS final : public PlatformView {
  public:
-  explicit PlatformViewIOS(CALayer* layer,
-                           NSObject<FlutterBinaryMessenger>* binaryMessenger);
+  explicit PlatformViewIOS(PlatformView::Delegate& delegate, flutter::TaskRunners task_runners);
 
   ~PlatformViewIOS() override;
 
-  void Attach() override;
+  PlatformMessageRouter& GetPlatformMessageRouter();
 
-  void Attach(fxl::Closure firstFrameCallback);
-
-  void NotifyCreated();
-
-  void ToggleAccessibility(UIView* view, bool enabled);
-
-  PlatformMessageRouter& platform_message_router() {
-    return platform_message_router_;
-  }
-
-  fml::WeakPtr<PlatformViewIOS> GetWeakPtr();
-
-  void UpdateSurfaceSize();
-
-  VsyncWaiter* GetVsyncWaiter() override;
-
-  bool ResourceContextMakeCurrent() override;
-
-  void HandlePlatformMessage(
-      fxl::RefPtr<blink::PlatformMessage> message) override;
+  fml::WeakPtr<FlutterViewController> GetOwnerViewController() const;
+  void SetOwnerViewController(fml::WeakPtr<FlutterViewController> owner_controller);
 
   void RegisterExternalTexture(int64_t id, NSObject<FlutterTexture>* texture);
 
-  void UpdateSemantics(std::vector<blink::SemanticsNode> update) override;
+  // |PlatformView|
+  PointerDataDispatcherMaker GetDispatcherMaker() override;
 
-  void RunFromSource(const std::string& assets_directory,
-                     const std::string& main,
-                     const std::string& packages) override;
+  fml::scoped_nsprotocol<FlutterTextInputPlugin*> GetTextInputPlugin() const;
 
-  NSObject<FlutterBinaryMessenger>* binary_messenger() const {
-    return binary_messenger_;
-  }
+  void SetTextInputPlugin(fml::scoped_nsprotocol<FlutterTextInputPlugin*> plugin);
+
+  // |PlatformView|
+  void SetSemanticsEnabled(bool enabled) override;
 
  private:
+  fml::WeakPtr<FlutterViewController> owner_controller_;
   std::unique_ptr<IOSSurface> ios_surface_;
+  std::shared_ptr<IOSGLContext> gl_context_;
   PlatformMessageRouter platform_message_router_;
   std::unique_ptr<AccessibilityBridge> accessibility_bridge_;
-  fxl::Closure firstFrameCallback_;
-  fml::WeakPtrFactory<PlatformViewIOS> weak_factory_;
-  NSObject<FlutterBinaryMessenger>* binary_messenger_;
+  fml::scoped_nsprotocol<FlutterTextInputPlugin*> text_input_plugin_;
+  fml::closure firstFrameCallback_;
 
-  void SetupAndLoadFromSource(const std::string& assets_directory,
-                              const std::string& main,
-                              const std::string& packages);
+  // |PlatformView|
+  void HandlePlatformMessage(fml::RefPtr<flutter::PlatformMessage> message) override;
 
-  FXL_DISALLOW_COPY_AND_ASSIGN(PlatformViewIOS);
+  // |PlatformView|
+  std::unique_ptr<Surface> CreateRenderingSurface() override;
+
+  // |PlatformView|
+  sk_sp<GrContext> CreateResourceContext() const override;
+
+  // |PlatformView|
+  void SetAccessibilityFeatures(int32_t flags) override;
+
+  // |PlatformView|
+  void UpdateSemantics(flutter::SemanticsNodeUpdates update,
+                       flutter::CustomAccessibilityActionUpdates actions) override;
+
+  // |PlatformView|
+  std::unique_ptr<VsyncWaiter> CreateVSyncWaiter() override;
+
+  // |PlatformView|
+  void OnPreEngineRestart() const override;
+
+  FML_DISALLOW_COPY_AND_ASSIGN(PlatformViewIOS);
 };
 
-}  // namespace shell
+}  // namespace flutter
 
 #endif  // SHELL_PLATFORM_IOS_PLATFORM_VIEW_IOS_H_

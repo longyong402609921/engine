@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
-#include "third_party/benchmark/include/benchmark/benchmark_api.h"
-
 #include <minikin/Layout.h>
-#include "lib/fxl/command_line.h"
-#include "lib/fxl/logging.h"
+
+#include "flutter/fml/command_line.h"
+#include "flutter/fml/logging.h"
+#include "flutter/third_party/txt/tests/txt_test_utils.h"
 #include "minikin/LayoutUtils.h"
+#include "third_party/benchmark/include/benchmark/benchmark_api.h"
 #include "third_party/icu/source/common/unicode/unistr.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
@@ -29,8 +30,7 @@
 #include "txt/font_style.h"
 #include "txt/font_weight.h"
 #include "txt/paragraph.h"
-#include "txt/paragraph_builder.h"
-#include "utils.h"
+#include "txt/paragraph_builder_txt.h"
 
 namespace txt {
 
@@ -43,16 +43,17 @@ static void BM_ParagraphShortLayout(benchmark::State& state) {
   txt::ParagraphStyle paragraph_style;
 
   txt::TextStyle text_style;
+  text_style.font_families = std::vector<std::string>(1, "Roboto");
   text_style.color = SK_ColorBLACK;
-  txt::ParagraphBuilder builder(paragraph_style, GetTestFontCollection());
+  txt::ParagraphBuilderTxt builder(paragraph_style, GetTestFontCollection());
 
   builder.PushStyle(text_style);
   builder.AddText(u16_text);
   builder.Pop();
-  auto paragraph = builder.Build();
+  auto paragraph = BuildParagraph(builder);
   while (state.KeepRunning()) {
     paragraph->SetDirty();
-    paragraph->Layout(300, true);
+    paragraph->Layout(300);
   }
 }
 BENCHMARK(BM_ParagraphShortLayout);
@@ -83,17 +84,18 @@ static void BM_ParagraphLongLayout(benchmark::State& state) {
   txt::ParagraphStyle paragraph_style;
 
   txt::TextStyle text_style;
+  text_style.font_families = std::vector<std::string>(1, "Roboto");
   text_style.color = SK_ColorBLACK;
 
-  txt::ParagraphBuilder builder(paragraph_style, GetTestFontCollection());
+  txt::ParagraphBuilderTxt builder(paragraph_style, GetTestFontCollection());
 
   builder.PushStyle(text_style);
   builder.AddText(u16_text);
   builder.Pop();
-  auto paragraph = builder.Build();
+  auto paragraph = BuildParagraph(builder);
   while (state.KeepRunning()) {
     paragraph->SetDirty();
-    paragraph->Layout(300, true);
+    paragraph->Layout(300);
   }
 }
 BENCHMARK(BM_ParagraphLongLayout);
@@ -125,17 +127,18 @@ static void BM_ParagraphJustifyLayout(benchmark::State& state) {
   paragraph_style.text_align = TextAlign::justify;
 
   txt::TextStyle text_style;
+  text_style.font_families = std::vector<std::string>(1, "Roboto");
   text_style.color = SK_ColorBLACK;
 
-  txt::ParagraphBuilder builder(paragraph_style, GetTestFontCollection());
+  txt::ParagraphBuilderTxt builder(paragraph_style, GetTestFontCollection());
 
   builder.PushStyle(text_style);
   builder.AddText(u16_text);
   builder.Pop();
-  auto paragraph = builder.Build();
+  auto paragraph = BuildParagraph(builder);
   while (state.KeepRunning()) {
     paragraph->SetDirty();
-    paragraph->Layout(300, true);
+    paragraph->Layout(300);
   }
 }
 BENCHMARK(BM_ParagraphJustifyLayout);
@@ -149,16 +152,17 @@ static void BM_ParagraphManyStylesLayout(benchmark::State& state) {
   txt::ParagraphStyle paragraph_style;
 
   txt::TextStyle text_style;
+  text_style.font_families = std::vector<std::string>(1, "Roboto");
   text_style.color = SK_ColorBLACK;
-  txt::ParagraphBuilder builder(paragraph_style, GetTestFontCollection());
+  txt::ParagraphBuilderTxt builder(paragraph_style, GetTestFontCollection());
   for (int i = 0; i < 1000; ++i) {
     builder.PushStyle(text_style);
     builder.AddText(u16_text);
   }
-  auto paragraph = builder.Build();
+  auto paragraph = BuildParagraph(builder);
   while (state.KeepRunning()) {
     paragraph->SetDirty();
-    paragraph->Layout(300, true);
+    paragraph->Layout(300);
   }
 }
 BENCHMARK(BM_ParagraphManyStylesLayout);
@@ -171,19 +175,21 @@ static void BM_ParagraphTextBigO(benchmark::State& state) {
   std::u16string u16_text(text.data(), text.data() + text.size());
 
   txt::ParagraphStyle paragraph_style;
+  paragraph_style.font_family = "Roboto";
 
   txt::TextStyle text_style;
+  text_style.font_families = std::vector<std::string>(1, "Roboto");
   text_style.color = SK_ColorBLACK;
 
-  txt::ParagraphBuilder builder(paragraph_style, GetTestFontCollection());
+  txt::ParagraphBuilderTxt builder(paragraph_style, GetTestFontCollection());
 
   builder.PushStyle(text_style);
   builder.AddText(u16_text);
   builder.Pop();
-  auto paragraph = builder.Build();
+  auto paragraph = BuildParagraph(builder);
   while (state.KeepRunning()) {
     paragraph->SetDirty();
-    paragraph->Layout(300, true);
+    paragraph->Layout(300);
   }
   state.SetComplexityN(state.range(0));
 }
@@ -201,18 +207,19 @@ static void BM_ParagraphStylesBigO(benchmark::State& state) {
   txt::ParagraphStyle paragraph_style;
 
   txt::TextStyle text_style;
+  text_style.font_families = std::vector<std::string>(1, "Roboto");
   text_style.color = SK_ColorBLACK;
 
-  txt::ParagraphBuilder builder(paragraph_style, GetTestFontCollection());
+  txt::ParagraphBuilderTxt builder(paragraph_style, GetTestFontCollection());
 
   for (int i = 0; i < state.range(0); ++i) {
     builder.PushStyle(text_style);
     builder.AddText(u16_text);
   }
-  auto paragraph = builder.Build();
+  auto paragraph = BuildParagraph(builder);
   while (state.KeepRunning()) {
     paragraph->SetDirty();
-    paragraph->Layout(300, true);
+    paragraph->Layout(300);
   }
   state.SetComplexityN(state.range(0));
 }
@@ -230,16 +237,17 @@ static void BM_ParagraphPaintSimple(benchmark::State& state) {
   txt::ParagraphStyle paragraph_style;
 
   txt::TextStyle text_style;
+  text_style.font_families = std::vector<std::string>(1, "Roboto");
   text_style.color = SK_ColorBLACK;
-  txt::ParagraphBuilder builder(paragraph_style, GetTestFontCollection());
+  txt::ParagraphBuilderTxt builder(paragraph_style, GetTestFontCollection());
   builder.PushStyle(text_style);
   builder.AddText(u16_text);
-  auto paragraph = builder.Build();
-  paragraph->Layout(300, true);
+  auto paragraph = BuildParagraph(builder);
+  paragraph->Layout(300);
 
   std::unique_ptr<SkBitmap> bitmap = std::make_unique<SkBitmap>();
-  std::unique_ptr<SkCanvas> canvas = std::make_unique<SkCanvas>(*bitmap);
   bitmap->allocN32Pixels(1000, 1000);
+  std::unique_ptr<SkCanvas> canvas = std::make_unique<SkCanvas>(*bitmap);
   canvas->clear(SK_ColorWHITE);
   int offset = 0;
   while (state.KeepRunning()) {
@@ -276,16 +284,17 @@ static void BM_ParagraphPaintLarge(benchmark::State& state) {
   txt::ParagraphStyle paragraph_style;
 
   txt::TextStyle text_style;
+  text_style.font_families = std::vector<std::string>(1, "Roboto");
   text_style.color = SK_ColorBLACK;
-  txt::ParagraphBuilder builder(paragraph_style, GetTestFontCollection());
+  txt::ParagraphBuilderTxt builder(paragraph_style, GetTestFontCollection());
   builder.PushStyle(text_style);
   builder.AddText(u16_text);
-  auto paragraph = builder.Build();
-  paragraph->Layout(300, true);
+  auto paragraph = BuildParagraph(builder);
+  paragraph->Layout(300);
 
   std::unique_ptr<SkBitmap> bitmap = std::make_unique<SkBitmap>();
-  std::unique_ptr<SkCanvas> canvas = std::make_unique<SkCanvas>(*bitmap);
   bitmap->allocN32Pixels(1000, 1000);
+  std::unique_ptr<SkCanvas> canvas = std::make_unique<SkCanvas>(*bitmap);
   canvas->clear(SK_ColorWHITE);
   int offset = 0;
   while (state.KeepRunning()) {
@@ -306,11 +315,14 @@ static void BM_ParagraphPaintDecoration(benchmark::State& state) {
   txt::ParagraphStyle paragraph_style;
 
   txt::TextStyle text_style;
-  text_style.decoration = TextDecoration(0x1 | 0x2 | 0x4);
+  text_style.font_families = std::vector<std::string>(1, "Roboto");
+  text_style.decoration = TextDecoration::kUnderline |
+                          TextDecoration::kOverline |
+                          TextDecoration::kLineThrough;
   text_style.decoration_style = TextDecorationStyle(kSolid);
   text_style.color = SK_ColorBLACK;
 
-  txt::ParagraphBuilder builder(paragraph_style, GetTestFontCollection());
+  txt::ParagraphBuilderTxt builder(paragraph_style, GetTestFontCollection());
 
   builder.PushStyle(text_style);
   builder.AddText(u16_text);
@@ -323,12 +335,12 @@ static void BM_ParagraphPaintDecoration(benchmark::State& state) {
   builder.PushStyle(text_style);
   builder.AddText(u16_text);
 
-  auto paragraph = builder.Build();
-  paragraph->Layout(300, true);
+  auto paragraph = BuildParagraph(builder);
+  paragraph->Layout(300);
 
   std::unique_ptr<SkBitmap> bitmap = std::make_unique<SkBitmap>();
-  std::unique_ptr<SkCanvas> canvas = std::make_unique<SkCanvas>(*bitmap);
   bitmap->allocN32Pixels(1000, 1000);
+  std::unique_ptr<SkCanvas> canvas = std::make_unique<SkCanvas>(*bitmap);
   canvas->clear(SK_ColorWHITE);
   int offset = 0;
   while (state.KeepRunning()) {
@@ -352,7 +364,7 @@ static void BM_ParagraphMinikinDoLayout(benchmark::State& state) {
   }
   minikin::FontStyle font;
   txt::TextStyle text_style;
-  text_style.font_family = "Roboto";
+  text_style.font_families = std::vector<std::string>(1, "Roboto");
   minikin::MinikinPaint paint;
 
   font = minikin::FontStyle(4, false);
@@ -360,8 +372,9 @@ static void BM_ParagraphMinikinDoLayout(benchmark::State& state) {
   paint.letterSpacing = text_style.letter_spacing;
   paint.wordSpacing = text_style.word_spacing;
 
-  auto collection = GetTestFontCollection()->GetMinikinFontCollectionForFamily(
-      text_style.font_family);
+  auto collection =
+      GetTestFontCollection()->GetMinikinFontCollectionForFamilies(
+          text_style.font_families, "en-US");
 
   while (state.KeepRunning()) {
     minikin::Layout layout;
@@ -382,7 +395,7 @@ static void BM_ParagraphMinikinAddStyleRun(benchmark::State& state) {
   }
   minikin::FontStyle font;
   txt::TextStyle text_style;
-  text_style.font_family = "Roboto";
+  text_style.font_families = std::vector<std::string>(1, "Roboto");
   minikin::MinikinPaint paint;
 
   font = minikin::FontStyle(4, false);
@@ -400,9 +413,11 @@ static void BM_ParagraphMinikinAddStyleRun(benchmark::State& state) {
 
   while (state.KeepRunning()) {
     for (int i = 0; i < 20; ++i) {
-      breaker.addStyleRun(
-          &paint, font_collection->GetMinikinFontCollectionForFamily("Roboto"),
-          font, state.range(0) / 20 * i, state.range(0) / 20 * (i + 1), false);
+      breaker.addStyleRun(&paint,
+                          font_collection->GetMinikinFontCollectionForFamilies(
+                              std::vector<std::string>(1, "Roboto"), "en-US"),
+                          font, state.range(0) / 20 * i,
+                          state.range(0) / 20 * (i + 1), false);
     }
   }
   state.SetComplexityN(state.range(0));
@@ -413,15 +428,14 @@ BENCHMARK(BM_ParagraphMinikinAddStyleRun)
     ->Complexity(benchmark::oN);
 
 static void BM_ParagraphSkTextBlobAlloc(benchmark::State& state) {
-  SkPaint paint;
-  paint.setAntiAlias(true);
-  paint.setTextEncoding(SkPaint::kGlyphID_TextEncoding);
-  paint.setTextSize(14);
-  paint.setFakeBoldText(false);
+  SkFont font;
+  font.setEdging(SkFont::Edging::kAntiAlias);
+  font.setSize(14);
+  font.setEmbolden(false);
 
   while (state.KeepRunning()) {
     SkTextBlobBuilder builder;
-    builder.allocRunPos(paint, state.range(0));
+    builder.allocRunPos(font, state.range(0));
   }
   state.SetComplexityN(state.range(0));
 }

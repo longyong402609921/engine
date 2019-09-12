@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2016 The Chromium Authors. All rights reserved.
+# Copyright 2013 The Flutter Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -47,6 +47,8 @@ def _find_package_pid(adb_path, package):
 def _get_device_abi(adb_path):
     abi_output = subprocess.check_output(
         [adb_path, 'shell', 'getprop', 'ro.product.cpu.abi']).strip()
+    if abi_output.startswith('arm64'):
+        return 'arm64'
     if abi_output.startswith('arm'):
         return 'arm'
     return abi_output
@@ -58,6 +60,8 @@ def _default_local_engine(abi):
         return 'android_debug_unopt_x86'
     elif abi == 'x86_64':
         return 'android_debug_unopt_x64'
+    elif abi == 'arm64':
+        return 'android_debug_unopt_arm64'
     else:
         return 'android_debug_unopt'
 
@@ -81,11 +85,11 @@ class GdbClient(object):
         parser.add_argument('--no-pull-libs', action="store_false",
             default=True, dest="pull_libs",
             help="Do not copy system libraries from the device to the host")
-        parser.add_argument('--sysroot', action="store_true", default=False,
-            help='Create a sysroot tree suitable for debugging on Android N')
+        parser.add_argument('--old-sysroot', action="store_true", default=False,
+            help='Create a sysroot tree suitable for debugging on older (pre-N) versions of Android')
         parser.set_defaults(func=self.run)
 
-    def _copy_system_libs(self, adb_path, package, sysroot):
+    def _copy_system_libs(self, adb_path, package, old_sysroot):
         """Copy libraries used by the Flutter process from the device to the host."""
         package_pid = _find_package_pid(adb_path, package)
         if package_pid is None:
@@ -96,14 +100,14 @@ class GdbClient(object):
             [adb_path, 'shell', 'run-as', package, 'cat', '/proc/%d/maps' % package_pid])
         proc_libs = re.findall('(/system/.*\.(?:so|oat))\s*$', proc_maps, re.MULTILINE)
 
-        if sysroot:
+        if old_sysroot:
+            device_libs = set((lib, os.path.basename(lib)) for lib in proc_libs)
+            device_libs.add(('/system/bin/linker', 'linker'))
+        else:
             device_libs = set((lib, lib[1:]) for lib in proc_libs)
             device_libs.add(('/system/bin/linker', 'system/bin/linker'))
             device_libs.add(('/system/bin/app_process32', 'system/bin/app_process32'))
             device_libs.add(('/system/bin/app_process64', 'system/bin/app_process64'))
-        else:
-            device_libs = set((lib, os.path.basename(lib)) for lib in proc_libs)
-            device_libs.add(('/system/bin/linker', 'linker'))
 
         if os.path.isdir(GdbClient.SYSTEM_LIBS_PATH):
             shutil.rmtree(GdbClient.SYSTEM_LIBS_PATH)
@@ -126,7 +130,7 @@ class GdbClient(object):
             adb_path = args.adb
 
         if args.pull_libs:
-            if not self._copy_system_libs(adb_path, args.package, args.sysroot):
+            if not self._copy_system_libs(adb_path, args.package, args.old_sysroot):
                 return 1
 
         subprocess.check_call(
@@ -140,11 +144,11 @@ class GdbClient(object):
 
         debug_out_path = os.path.join(flutter_root, 'out/%s' % local_engine)
         if not os.path.exists(os.path.join(debug_out_path, 'libflutter.so')):
-            print 'Unable to find libflutter.so. Make sure you have completed a %s build' % args.local_engine
+            print 'Unable to find libflutter.so. Make sure you have completed a %s build' % local_engine
             return 1
 
         eval_commands = []
-        if args.sysroot:
+        if not args.old_sysroot:
             eval_commands.append('set sysroot %s' % GdbClient.SYSTEM_LIBS_PATH)
         eval_commands.append('set solib-search-path %s:%s' %
                              (debug_out_path, GdbClient.SYSTEM_LIBS_PATH))
@@ -186,9 +190,13 @@ class GdbServer(object):
                                os.path.join(flutter_root, gdb_server_local_path),
                                GdbServer.GDB_SERVER_DEVICE_TMP_PATH])
         gdb_server_device_path = '/data/data/%s/gdbserver' % args.package
-        subprocess.check_call([adb_path, 'shell', 'run-as', args.package, 'cp',
+        subprocess.check_call([adb_path, 'shell', 'run-as', args.package, 'cp', '-F',
                                GdbServer.GDB_SERVER_DEVICE_TMP_PATH,
                                gdb_server_device_path])
+
+
+        subprocess.call([adb_path, 'shell', 'run-as', args.package,
+                         'killall', 'gdbserver'])
 
         # Run gdbserver.
         try:

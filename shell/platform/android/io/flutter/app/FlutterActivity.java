@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,9 +9,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.os.Bundle;
+import android.support.annotation.NonNull;
+import android.util.Log;
 import io.flutter.app.FlutterActivityDelegate.ViewFactory;
 import io.flutter.plugin.common.PluginRegistry;
-import io.flutter.plugin.common.PluginRegistry.Registrar;
 import io.flutter.view.FlutterNativeView;
 import io.flutter.view.FlutterView;
 
@@ -19,6 +20,8 @@ import io.flutter.view.FlutterView;
  * Base class for activities that use Flutter.
  */
 public class FlutterActivity extends Activity implements FlutterView.Provider, PluginRegistry, ViewFactory {
+    private static final String TAG = "FlutterActivity";
+    
     private final FlutterActivityDelegate delegate = new FlutterActivityDelegate(this, this);
 
     // These aliases ensure that the methods we forward to the delegate adhere
@@ -61,6 +64,11 @@ public class FlutterActivity extends Activity implements FlutterView.Provider, P
     }
 
     @Override
+    public boolean retainFlutterNativeView() {
+        return false;
+    }
+
+    @Override
     public final boolean hasPlugin(String key) {
         return pluginRegistry.hasPlugin(key);
     }
@@ -79,6 +87,12 @@ public class FlutterActivity extends Activity implements FlutterView.Provider, P
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         eventDelegate.onCreate(savedInstanceState);
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        eventDelegate.onStart();
     }
 
     @Override
@@ -101,6 +115,12 @@ public class FlutterActivity extends Activity implements FlutterView.Provider, P
     }
 
     @Override
+    protected void onStop() {
+        eventDelegate.onStop();
+        super.onStop();
+    }
+
+    @Override
     protected void onPause() {
         super.onPause();
         eventDelegate.onPause();
@@ -113,8 +133,8 @@ public class FlutterActivity extends Activity implements FlutterView.Provider, P
     }
 
     // @Override - added in API level 23
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        eventDelegate.onRequestPermissionResult(requestCode, permissions, grantResults);
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        eventDelegate.onRequestPermissionsResult(requestCode, permissions, grantResults);
     }
 
     @Override

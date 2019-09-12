@@ -1,74 +1,83 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
+#define FML_USED_ON_EMBEDDER
 
 #include "flutter/fml/message_loop_impl.h"
 
 #include <algorithm>
 #include <vector>
 
+#include "flutter/fml/build_config.h"
+#include "flutter/fml/logging.h"
 #include "flutter/fml/trace_event.h"
-#include "lib/fxl/build_config.h"
 
 #if OS_MACOSX
-
 #include "flutter/fml/platform/darwin/message_loop_darwin.h"
-using PlatformMessageLoopImpl = fml::MessageLoopDarwin;
-
 #elif OS_ANDROID
-
 #include "flutter/fml/platform/android/message_loop_android.h"
-using PlatformMessageLoopImpl = fml::MessageLoopAndroid;
-
 #elif OS_LINUX
-
 #include "flutter/fml/platform/linux/message_loop_linux.h"
-using PlatformMessageLoopImpl = fml::MessageLoopLinux;
-
 #elif OS_WIN
-
 #include "flutter/fml/platform/win/message_loop_win.h"
-using PlatformMessageLoopImpl = fml::MessageLoopWin;
-
-#else
-
-#error This platform does not have a message loop implementation.
-
 #endif
 
 namespace fml {
 
-fxl::RefPtr<MessageLoopImpl> MessageLoopImpl::Create() {
-  return fxl::MakeRefCounted<::PlatformMessageLoopImpl>();
+fml::RefPtr<MessageLoopImpl> MessageLoopImpl::Create() {
+#if OS_MACOSX
+  return fml::MakeRefCounted<MessageLoopDarwin>();
+#elif OS_ANDROID
+  return fml::MakeRefCounted<MessageLoopAndroid>();
+#elif OS_LINUX
+  return fml::MakeRefCounted<MessageLoopLinux>();
+#elif OS_WIN
+  return fml::MakeRefCounted<MessageLoopWin>();
+#else
+  return nullptr;
+#endif
 }
 
-MessageLoopImpl::MessageLoopImpl() : order_(0), terminated_(false) {}
-
-MessageLoopImpl::~MessageLoopImpl() = default;
-
-void MessageLoopImpl::PostTask(fxl::Closure task, fxl::TimePoint target_time) {
-  FXL_DCHECK(task != nullptr);
-  RegisterTask(task, target_time);
+MessageLoopImpl::MessageLoopImpl()
+    : task_queue_(MessageLoopTaskQueues::GetInstance()),
+      queue_id_(task_queue_->CreateTaskQueue()),
+      terminated_(false) {
+  task_queue_->SetWakeable(queue_id_, this);
 }
 
-void MessageLoopImpl::RunExpiredTasksNow() {
-  RunExpiredTasks();
+MessageLoopImpl::~MessageLoopImpl() {
+  task_queue_->Dispose(queue_id_);
 }
 
-void MessageLoopImpl::AddTaskObserver(TaskObserver* observer) {
-  FXL_DCHECK(observer != nullptr);
-  FXL_DCHECK(MessageLoop::GetCurrent().GetLoopImpl().get() == this)
+void MessageLoopImpl::PostTask(fml::closure task, fml::TimePoint target_time) {
+  FML_DCHECK(task != nullptr);
+  FML_DCHECK(task != nullptr);
+  if (terminated_) {
+    // If the message loop has already been terminated, PostTask should destruct
+    // |task| synchronously within this function.
+    return;
+  }
+  task_queue_->RegisterTask(queue_id_, task, target_time);
+}
+
+void MessageLoopImpl::AddTaskObserver(intptr_t key, fml::closure callback) {
+  FML_DCHECK(callback != nullptr);
+  FML_DCHECK(MessageLoop::GetCurrent().GetLoopImpl().get() == this)
       << "Message loop task observer must be added on the same thread as the "
          "loop.";
-  task_observers_.insert(observer);
+  if (callback != nullptr) {
+    task_queue_->AddTaskObserver(queue_id_, key, callback);
+  } else {
+    FML_LOG(ERROR) << "Tried to add a null TaskObserver.";
+  }
 }
 
-void MessageLoopImpl::RemoveTaskObserver(TaskObserver* observer) {
-  FXL_DCHECK(observer != nullptr);
-  FXL_DCHECK(MessageLoop::GetCurrent().GetLoopImpl().get() == this)
+void MessageLoopImpl::RemoveTaskObserver(intptr_t key) {
+  FML_DCHECK(MessageLoop::GetCurrent().GetLoopImpl().get() == this)
       << "Message loop task observer must be removed from the same thread as "
          "the loop.";
-  task_observers_.erase(observer);
+  task_queue_->RemoveTaskObserver(queue_id_, key);
 }
 
 void MessageLoopImpl::DoRun() {
@@ -94,8 +103,7 @@ void MessageLoopImpl::DoRun() {
   // should be destructed on the message loop's thread. We have just returned
   // from the implementations |Run| method which we know is on the correct
   // thread. Drop all pending tasks on the floor.
-  fxl::MutexLocker lock(&delayed_tasks_mutex_);
-  delayed_tasks_ = {};
+  task_queue_->DisposeTasks(queue_id_);
 }
 
 void MessageLoopImpl::DoTerminate() {
@@ -103,50 +111,32 @@ void MessageLoopImpl::DoTerminate() {
   Terminate();
 }
 
-void MessageLoopImpl::RegisterTask(fxl::Closure task,
-                                   fxl::TimePoint target_time) {
-  FXL_DCHECK(task != nullptr);
-  if (terminated_) {
-    // If the message loop has already been terminated, PostTask should destruct
-    // |task| synchronously within this function.
-    return;
-  }
-  fxl::MutexLocker lock(&delayed_tasks_mutex_);
-  delayed_tasks_.push({++order_, std::move(task), target_time});
-  WakeUp(delayed_tasks_.top().target_time);
-}
+void MessageLoopImpl::FlushTasks(FlushType type) {
+  TRACE_EVENT0("fml", "MessageLoop::FlushTasks");
+  std::vector<fml::closure> invocations;
 
-void MessageLoopImpl::RunExpiredTasks() {
-  TRACE_EVENT0("fml", "MessageLoop::RunExpiredTasks");
-  std::vector<fxl::Closure> invocations;
-
-  {
-    fxl::MutexLocker lock(&delayed_tasks_mutex_);
-
-    if (delayed_tasks_.empty()) {
-      return;
-    }
-
-    auto now = fxl::TimePoint::Now();
-    while (!delayed_tasks_.empty()) {
-      const auto& top = delayed_tasks_.top();
-      if (top.target_time > now) {
-        break;
-      }
-      invocations.emplace_back(std::move(top.task));
-      delayed_tasks_.pop();
-    }
-
-    WakeUp(delayed_tasks_.empty() ? fxl::TimePoint::Max()
-                                  : delayed_tasks_.top().target_time);
-  }
+  task_queue_->GetTasksToRunNow(queue_id_, type, invocations);
 
   for (const auto& invocation : invocations) {
     invocation();
-    for (const auto& observer : task_observers_) {
-      observer->DidProcessTask();
+    std::vector<fml::closure> observers =
+        task_queue_->GetObserversToNotify(queue_id_);
+    for (const auto& observer : observers) {
+      observer();
     }
   }
+}
+
+void MessageLoopImpl::RunExpiredTasksNow() {
+  FlushTasks(FlushType::kAll);
+}
+
+void MessageLoopImpl::RunSingleExpiredTaskNow() {
+  FlushTasks(FlushType::kSingle);
+}
+
+TaskQueueId MessageLoopImpl::GetTaskQueueId() const {
+  return queue_id_;
 }
 
 }  // namespace fml

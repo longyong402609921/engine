@@ -18,19 +18,23 @@
 #define LIB_TXT_SRC_TEXT_STYLE_H_
 
 #include <string>
+#include <vector>
 
+#include "font_features.h"
 #include "font_style.h"
 #include "font_weight.h"
 #include "text_baseline.h"
 #include "text_decoration.h"
+#include "text_shadow.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "third_party/skia/include/core/SkPaint.h"
 
 namespace txt {
 
 class TextStyle {
  public:
   SkColor color = SK_ColorWHITE;
-  TextDecoration decoration = TextDecoration::kNone;
+  int decoration = TextDecoration::kNone;
   // Does not make sense to draw a transparent object, so we use it as a default
   // value to indicate no decoration color was set.
   SkColor decoration_color = SK_ColorTRANSPARENT;
@@ -40,11 +44,23 @@ class TextStyle {
   FontWeight font_weight = FontWeight::w400;
   FontStyle font_style = FontStyle::normal;
   TextBaseline text_baseline = TextBaseline::kAlphabetic;
-  std::string font_family;
+  // An ordered list of fonts in order of priority. The first font is more
+  // highly preferred than the last font.
+  std::vector<std::string> font_families;
   double font_size = 14.0;
   double letter_spacing = 0.0;
   double word_spacing = 0.0;
   double height = 1.0;
+  bool has_height_override = false;
+  std::string locale;
+  bool has_background = false;
+  SkPaint background;
+  bool has_foreground = false;
+  SkPaint foreground;
+  // An ordered list of shadows where the first shadow will be drawn first (at
+  // the bottom).
+  std::vector<TextShadow> text_shadows;
+  FontFeatures font_features;
 
   TextStyle();
 

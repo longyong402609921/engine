@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,14 +8,15 @@
 
 #include "flutter/shell/platform/darwin/common/buffer_conversions.h"
 
-namespace shell {
+namespace flutter {
 
 PlatformMessageRouter::PlatformMessageRouter() = default;
 
 PlatformMessageRouter::~PlatformMessageRouter() = default;
 
-void PlatformMessageRouter::HandlePlatformMessage(fxl::RefPtr<blink::PlatformMessage> message) {
-  fxl::RefPtr<blink::PlatformMessageResponse> completer = message->response();
+void PlatformMessageRouter::HandlePlatformMessage(
+    fml::RefPtr<flutter::PlatformMessage> message) const {
+  fml::RefPtr<flutter::PlatformMessageResponse> completer = message->response();
   auto it = message_handlers_.find(message->channel());
   if (it != message_handlers_.end()) {
     FlutterBinaryMessageHandler handler = it->second;
@@ -26,7 +27,7 @@ void PlatformMessageRouter::HandlePlatformMessage(fxl::RefPtr<blink::PlatformMes
     handler(data, ^(NSData* reply) {
       if (completer) {
         if (reply) {
-          completer->Complete(GetVectorFromNSData(reply));
+          completer->Complete(GetMappingFromNSData(reply));
         } else {
           completer->CompleteEmpty();
         }
@@ -41,15 +42,11 @@ void PlatformMessageRouter::HandlePlatformMessage(fxl::RefPtr<blink::PlatformMes
 
 void PlatformMessageRouter::SetMessageHandler(const std::string& channel,
                                               FlutterBinaryMessageHandler handler) {
-  if (handler)
-    message_handlers_[channel] = [handler copy];
-  else {
-    auto it = message_handlers_.find(channel);
-    if (it != message_handlers_.end()) {
-      [it->second release];
-      message_handlers_.erase(it);
-    }
+  message_handlers_.erase(channel);
+  if (handler) {
+    message_handlers_[channel] =
+        fml::ScopedBlock<FlutterBinaryMessageHandler>{handler, fml::OwnershipPolicy::Retain};
   }
 }
 
-}  // namespace shell
+}  // namespace flutter

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,9 +6,11 @@
 
 #include <stdlib.h>
 
+#include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkShader.h"
 
-namespace flow {
+namespace flutter {
 
 namespace {
 
@@ -18,8 +20,7 @@ sk_sp<SkShader> CreateCheckerboardShader(SkColor c1, SkColor c2, int size) {
   bm.eraseColor(c1);
   bm.eraseArea(SkIRect::MakeLTRB(0, 0, size, size), c2);
   bm.eraseArea(SkIRect::MakeLTRB(size, size, 2 * size, 2 * size), c2);
-  return SkShader::MakeBitmapShader(bm, SkShader::kRepeat_TileMode,
-                                    SkShader::kRepeat_TileMode);
+  return bm.makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat);
 }
 
 }  // anonymous namespace
@@ -36,7 +37,7 @@ void DrawCheckerboard(SkCanvas* canvas, const SkRect& rect) {
   canvas->clipRect(rect);
 
   auto checkerboard_color =
-      SkColorSetARGBInline(64, rand() % 256, rand() % 256, rand() % 256);
+      SkColorSetARGB(64, rand() % 256, rand() % 256, rand() % 256);
 
   DrawCheckerboard(canvas, checkerboard_color, 0x00000000, 12);
   canvas->restore();
@@ -49,4 +50,4 @@ void DrawCheckerboard(SkCanvas* canvas, const SkRect& rect) {
   canvas->drawRect(rect, debugPaint);
 }
 
-}  // namespace flow
+}  // namespace flutter

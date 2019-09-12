@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -10,54 +10,40 @@
 #include <unordered_map>
 #include <vector>
 
+#include "flutter/fml/memory/weak_ptr.h"
 #include "flutter/fml/platform/android/jni_weak_ref.h"
 #include "flutter/fml/platform/android/scoped_java_ref.h"
 #include "flutter/lib/ui/window/platform_message.h"
 #include "flutter/shell/common/platform_view.h"
 #include "flutter/shell/platform/android/android_native_window.h"
 #include "flutter/shell/platform/android/android_surface.h"
-#include "lib/fxl/memory/weak_ptr.h"
 
-namespace shell {
+namespace flutter {
 
-class PlatformViewAndroid : public PlatformView {
+class PlatformViewAndroid final : public PlatformView {
  public:
   static bool Register(JNIEnv* env);
 
-  PlatformViewAndroid();
+  // Creates a PlatformViewAndroid with no rendering surface for use with
+  // background execution.
+  PlatformViewAndroid(PlatformView::Delegate& delegate,
+                      flutter::TaskRunners task_runners,
+                      fml::jni::JavaObjectWeakGlobalRef java_object);
+
+  // Creates a PlatformViewAndroid with a rendering surface.
+  PlatformViewAndroid(PlatformView::Delegate& delegate,
+                      flutter::TaskRunners task_runners,
+                      fml::jni::JavaObjectWeakGlobalRef java_object,
+                      bool use_software_rendering);
 
   ~PlatformViewAndroid() override;
 
-  virtual void Attach() override;
+  void NotifyCreated(fml::RefPtr<AndroidNativeWindow> native_window);
 
-  void Detach();
+  void NotifyChanged(const SkISize& size);
 
-  void SurfaceCreated(JNIEnv* env, jobject jsurface, jint backgroundColor);
-
-  void SurfaceChanged(jint width, jint height);
-
-  void SurfaceDestroyed();
-
-  void RunBundleAndSnapshot(std::string bundle_path,
-                            std::string snapshot_override,
-                            std::string entrypoint,
-                            bool reuse_isolate);
-
-  void RunBundleAndSource(std::string bundle_path,
-                          std::string main,
-                          std::string packages);
-
-  void SetViewportMetrics(jfloat device_pixel_ratio,
-                          jint physical_width,
-                          jint physical_height,
-                          jint physical_padding_top,
-                          jint physical_padding_right,
-                          jint physical_padding_bottom,
-                          jint physical_padding_left,
-                          jint physical_view_inset_top,
-                          jint physical_view_inset_right,
-                          jint physical_view_inset_bottom,
-                          jint physical_view_inset_left);
+  // |PlatformView|
+  void NotifyDestroyed() override;
 
   void DispatchPlatformMessage(JNIEnv* env,
                                std::string name,
@@ -68,8 +54,6 @@ class PlatformViewAndroid : public PlatformView {
   void DispatchEmptyPlatformMessage(JNIEnv* env,
                                     std::string name,
                                     jint response_id);
-
-  void DispatchPointerDataPacket(JNIEnv* env, jobject buffer, jint position);
 
   void InvokePlatformMessageResponseCallback(JNIEnv* env,
                                              jint response_id,
@@ -85,55 +69,49 @@ class PlatformViewAndroid : public PlatformView {
                                jobject args,
                                jint args_position);
 
-  void SetSemanticsEnabled(jboolean enabled);
-
-  fml::jni::ScopedJavaLocalRef<jobject> GetBitmap(JNIEnv* env);
-
-  VsyncWaiter* GetVsyncWaiter() override;
-
-  bool ResourceContextMakeCurrent() override;
-
-  void UpdateSemantics(std::vector<blink::SemanticsNode> update) override;
-
-  void HandlePlatformMessage(
-      fxl::RefPtr<blink::PlatformMessage> message) override;
-
-  void HandlePlatformMessageResponse(int response_id,
-                                     std::vector<uint8_t> data);
-
-  void HandlePlatformMessageEmptyResponse(int response_id);
-
-  void RunFromSource(const std::string& assets_directory,
-                     const std::string& main,
-                     const std::string& packages) override;
-
   void RegisterExternalTexture(
       int64_t texture_id,
       const fml::jni::JavaObjectWeakGlobalRef& surface_texture);
 
-  void MarkTextureFrameAvailable(int64_t texture_id) override;
-
-  void set_flutter_view(const fml::jni::JavaObjectWeakGlobalRef& flutter_view) {
-    flutter_view_ = flutter_view;
-  }
-
  private:
-  std::unique_ptr<AndroidSurface> android_surface_;
-  fml::jni::JavaObjectWeakGlobalRef flutter_view_;
+  const fml::jni::JavaObjectWeakGlobalRef java_object_;
+  const std::unique_ptr<AndroidSurface> android_surface_;
   // We use id 0 to mean that no response is expected.
   int next_response_id_ = 1;
-  std::unordered_map<int, fxl::RefPtr<blink::PlatformMessageResponse>>
+  std::unordered_map<int, fml::RefPtr<flutter::PlatformMessageResponse>>
       pending_responses_;
 
-  void UpdateThreadPriorities();
+  // |PlatformView|
+  void UpdateSemantics(
+      flutter::SemanticsNodeUpdates update,
+      flutter::CustomAccessibilityActionUpdates actions) override;
 
-  void ReleaseSurface();
+  // |PlatformView|
+  void HandlePlatformMessage(
+      fml::RefPtr<flutter::PlatformMessage> message) override;
 
-  void GetBitmapGpuTask(jobject* pixels_out, SkISize* size_out);
+  // |PlatformView|
+  void OnPreEngineRestart() const override;
 
-  FXL_DISALLOW_COPY_AND_ASSIGN(PlatformViewAndroid);
+  // |PlatformView|
+  std::unique_ptr<VsyncWaiter> CreateVSyncWaiter() override;
+
+  // |PlatformView|
+  std::unique_ptr<Surface> CreateRenderingSurface() override;
+
+  // |PlatformView|
+  sk_sp<GrContext> CreateResourceContext() const override;
+
+  // |PlatformView|
+  void ReleaseResourceContext() const override;
+
+  void InstallFirstFrameCallback();
+
+  void FireFirstFrameCallback();
+
+  FML_DISALLOW_COPY_AND_ASSIGN(PlatformViewAndroid);
 };
 
-}  // namespace shell
+}  // namespace flutter
 
 #endif  // SHELL_PLATFORM_ANDROID_PLATFORM_VIEW_ANDROID_H_

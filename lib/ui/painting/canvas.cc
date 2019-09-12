@@ -1,27 +1,28 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "flutter/lib/ui/painting/canvas.h"
 
+#define _USE_MATH_DEFINES
 #include <math.h>
 
-#include "flutter/flow/layers/physical_model_layer.h"
+#include "flutter/flow/layers/physical_shape_layer.h"
 #include "flutter/lib/ui/painting/image.h"
 #include "flutter/lib/ui/painting/matrix.h"
 #include "flutter/lib/ui/ui_dart_state.h"
 #include "flutter/lib/ui/window/window.h"
-#include "lib/tonic/converter/dart_converter.h"
-#include "lib/tonic/dart_args.h"
-#include "lib/tonic/dart_binding_macros.h"
-#include "lib/tonic/dart_library_natives.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkRSXform.h"
+#include "third_party/tonic/converter/dart_converter.h"
+#include "third_party/tonic/dart_args.h"
+#include "third_party/tonic/dart_binding_macros.h"
+#include "third_party/tonic/dart_library_natives.h"
 
 using tonic::ToDart;
 
-namespace blink {
+namespace flutter {
 
 static void Canvas_constructor(Dart_NativeArguments args) {
   DartCallConstructor(&Canvas::Create, args);
@@ -69,7 +70,7 @@ void Canvas::RegisterNatives(tonic::DartLibraryNatives* natives) {
                      FOR_EACH_BINDING(DART_REGISTER_NATIVE)});
 }
 
-fxl::RefPtr<Canvas> Canvas::Create(PictureRecorder* recorder,
+fml::RefPtr<Canvas> Canvas::Create(PictureRecorder* recorder,
                                    double left,
                                    double top,
                                    double right,
@@ -77,8 +78,8 @@ fxl::RefPtr<Canvas> Canvas::Create(PictureRecorder* recorder,
   if (!recorder)
     Dart_ThrowException(
         ToDart("Canvas constructor called with non-genuine PictureRecorder."));
-  FXL_DCHECK(!recorder->isRecording());  // verified by Dart code
-  fxl::RefPtr<Canvas> canvas = fxl::MakeRefCounted<Canvas>(
+  FML_DCHECK(!recorder->isRecording());  // verified by Dart code
+  fml::RefPtr<Canvas> canvas = fml::MakeRefCounted<Canvas>(
       recorder->BeginRecording(SkRect::MakeLTRB(left, top, right, bottom)));
   recorder->set_canvas(canvas);
   return canvas;
@@ -159,25 +160,27 @@ void Canvas::clipRect(double left,
                       double top,
                       double right,
                       double bottom,
-                      SkClipOp clipOp) {
+                      SkClipOp clipOp,
+                      bool doAntiAlias) {
   if (!canvas_)
     return;
-  canvas_->clipRect(SkRect::MakeLTRB(left, top, right, bottom), clipOp, true);
+  canvas_->clipRect(SkRect::MakeLTRB(left, top, right, bottom), clipOp,
+                    doAntiAlias);
 }
 
-void Canvas::clipRRect(const RRect& rrect) {
+void Canvas::clipRRect(const RRect& rrect, bool doAntiAlias) {
   if (!canvas_)
     return;
-  canvas_->clipRRect(rrect.sk_rrect, true);
+  canvas_->clipRRect(rrect.sk_rrect, doAntiAlias);
 }
 
-void Canvas::clipPath(const CanvasPath* path) {
+void Canvas::clipPath(const CanvasPath* path, bool doAntiAlias) {
   if (!canvas_)
     return;
   if (!path)
     Dart_ThrowException(
         ToDart("Canvas.clipPath called with non-genuine Path."));
-  canvas_->clipPath(path->path(), true);
+  canvas_->clipPath(path->path(), doAntiAlias);
 }
 
 void Canvas::drawColor(SkColor color, SkBlendMode blend_mode) {
@@ -416,8 +419,8 @@ void Canvas::drawShadow(const CanvasPath* path,
         ToDart("Canvas.drawShader called with non-genuine Path."));
   SkScalar dpr =
       UIDartState::Current()->window()->viewport_metrics().device_pixel_ratio;
-  flow::PhysicalModelLayer::DrawShadow(canvas_, path->path(), color, elevation,
-                                       transparentOccluder, dpr);
+  flutter::PhysicalShapeLayer::DrawShadow(canvas_, path->path(), color,
+                                          elevation, transparentOccluder, dpr);
 }
 
 void Canvas::Clear() {
@@ -428,4 +431,4 @@ bool Canvas::IsRecording() const {
   return !!canvas_;
 }
 
-}  // namespace blink
+}  // namespace flutter

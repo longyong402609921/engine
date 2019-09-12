@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -11,39 +11,47 @@
 
 #include <type_traits>
 
-#include "lib/fxl/build_config.h"
-#include "lib/fxl/files/eintr_wrapper.h"
-
-#if OS_MACOSX
-
-#include "flutter/fml/platform/darwin/resource_mapping_darwin.h"
-using PlatformResourceMapping = fml::ResourceMappingDarwin;
-
-#else
-
-using PlatformResourceMapping = fml::FileMapping;
-
-#endif
+#include "flutter/fml/build_config.h"
+#include "flutter/fml/eintr_wrapper.h"
+#include "flutter/fml/unique_fd.h"
 
 namespace fml {
+
+static int ToPosixProtectionFlags(
+    std::initializer_list<FileMapping::Protection> protection_flags) {
+  int flags = 0;
+  for (auto protection : protection_flags) {
+    switch (protection) {
+      case FileMapping::Protection::kRead:
+        flags |= PROT_READ;
+        break;
+      case FileMapping::Protection::kWrite:
+        flags |= PROT_WRITE;
+        break;
+      case FileMapping::Protection::kExecute:
+        flags |= PROT_READ | PROT_EXEC;
+        break;
+    }
+  }
+  return flags;
+}
+
+static bool IsWritable(
+    std::initializer_list<FileMapping::Protection> protection_flags) {
+  for (auto protection : protection_flags) {
+    if (protection == FileMapping::Protection::kWrite) {
+      return true;
+    }
+  }
+  return false;
+}
 
 Mapping::Mapping() = default;
 
 Mapping::~Mapping() = default;
 
-bool PlatformHasResourcesBundle() {
-  return !std::is_same<PlatformResourceMapping, FileMapping>::value;
-}
-
-std::unique_ptr<Mapping> GetResourceMapping(const std::string& resource_name) {
-  return std::make_unique<PlatformResourceMapping>(resource_name);
-}
-
-FileMapping::FileMapping(const std::string& path)
-    : FileMapping(fxl::UniqueFD{HANDLE_EINTR(::open(path.c_str(), O_RDONLY))}) {
-}
-
-FileMapping::FileMapping(const fxl::UniqueFD& handle)
+FileMapping::FileMapping(const fml::UniqueFD& handle,
+                         std::initializer_list<Protection> protection)
     : size_(0), mapping_(nullptr) {
   if (!handle.is_valid()) {
     return;
@@ -55,12 +63,16 @@ FileMapping::FileMapping(const fxl::UniqueFD& handle)
     return;
   }
 
-  if (stat_buffer.st_size <= 0) {
+  if (stat_buffer.st_size == 0) {
+    valid_ = true;
     return;
   }
 
-  auto mapping = ::mmap(nullptr, stat_buffer.st_size, PROT_READ, MAP_PRIVATE,
-                        handle.get(), 0);
+  const auto is_writable = IsWritable(protection);
+
+  auto* mapping =
+      ::mmap(nullptr, stat_buffer.st_size, ToPosixProtectionFlags(protection),
+             is_writable ? MAP_SHARED : MAP_PRIVATE, handle.get(), 0);
 
   if (mapping == MAP_FAILED) {
     return;
@@ -68,6 +80,10 @@ FileMapping::FileMapping(const fxl::UniqueFD& handle)
 
   mapping_ = static_cast<uint8_t*>(mapping);
   size_ = stat_buffer.st_size;
+  valid_ = true;
+  if (is_writable) {
+    mutable_mapping_ = mapping_;
+  }
 }
 
 FileMapping::~FileMapping() {
@@ -82,6 +98,10 @@ size_t FileMapping::GetSize() const {
 
 const uint8_t* FileMapping::GetMapping() const {
   return mapping_;
+}
+
+bool FileMapping::IsValid() const {
+  return valid_;
 }
 
 }  // namespace fml

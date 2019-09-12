@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@ package io.flutter.plugin.common;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import io.flutter.plugin.platform.PlatformViewRegistry;
 import io.flutter.view.FlutterNativeView;
 import io.flutter.view.FlutterView;
 import io.flutter.view.TextureRegistry;
@@ -76,9 +77,16 @@ public interface PluginRegistry {
         Activity activity();
 
         /**
-         * Returns the {@link Application}'s {@link Context}.
+         * Returns the {@link android.app.Application}'s {@link Context}.
          */
         Context context();
+
+        /**
+        * Returns the active {@link Context}.
+        *
+        * @return the current {@link #activity() Activity}, if not null, otherwise the {@link #context() Application}.
+        */
+        Context activeContext();
 
         /**
          * Returns a {@link BinaryMessenger} which the plugin can use for
@@ -93,10 +101,40 @@ public interface PluginRegistry {
         TextureRegistry textures();
 
         /**
+         * Returns the application's {@link PlatformViewRegistry}.
+         *
+         * Plugins can use the platform registry to register their view factories.
+         */
+        PlatformViewRegistry platformViewRegistry();
+
+        /**
          * Returns the {@link FlutterView} that's instantiated by this plugin's
          * {@link #activity() activity}.
          */
         FlutterView view();
+
+
+        /**
+         * Returns the file name for the given asset.
+         * The returned file name can be used to access the asset in the APK
+         * through the {@link android.content.res.AssetManager} API.
+         *
+         * @param asset the name of the asset. The name can be hierarchical
+         * @return      the filename to be used with {@link android.content.res.AssetManager}
+         */
+        String lookupKeyForAsset(String asset);
+
+        /**
+         * Returns the file name for the given asset which originates from the
+         * specified packageName. The returned file name can be used to access
+         * the asset in the APK through the {@link android.content.res.AssetManager} API.
+         *
+         * @param asset       the name of the asset. The name can be hierarchical
+         * @param packageName the name of the package from which the asset originates
+         * @return            the file name to be used with {@link android.content.res.AssetManager}
+         */
+        String lookupKeyForAsset(String asset, String packageName);
+
 
         /**
          * Publishes a value associated with the plugin being registered.
@@ -117,13 +155,13 @@ public interface PluginRegistry {
 
         /**
          * Adds a callback allowing the plugin to take part in handling incoming
-         * calls to {@link Activity#onRequestPermissionsResult(int, String[], int[])}
-         * or {android.support.v4.app.ActivityCompat.OnRequestPermissionsResultCallback#onRequestPermissionsResult(int, String[], int[])}.
+         * calls to {@code Activity#onRequestPermissionsResult(int, String[], int[])}
+         * or {@code android.support.v4.app.ActivityCompat.OnRequestPermissionsResultCallback#onRequestPermissionsResult(int, String[], int[])}.
          *
-         * @param listener a {@link RequestPermissionResultListener} callback.
+         * @param listener a {@link RequestPermissionsResultListener} callback.
          * @return this {@link Registrar}.
          */
-        Registrar addRequestPermissionResultListener(RequestPermissionResultListener listener);
+        Registrar addRequestPermissionsResultListener(RequestPermissionsResultListener listener);
 
         /**
          * Adds a callback allowing the plugin to take part in handling incoming
@@ -163,14 +201,14 @@ public interface PluginRegistry {
     }
 
     /**
-     * Delegate interface for handling results of permission requests on
+     * Delegate interface for handling result of permissions requests on
      * behalf of the main {@link Activity}.
      */
-    interface RequestPermissionResultListener {
+    interface RequestPermissionsResultListener {
         /**
          * @return true if the result has been handled.
          */
-        boolean onRequestPermissionResult(int requestCode, String[] permissions, int[] grantResults);
+        boolean onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults);
     }
 
     /**

@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,54 +7,34 @@
 
 #include <unordered_map>
 #include "flutter/flow/matrix_decomposition.h"
-#include "lib/fxl/macros.h"
-#include "third_party/skia/include/core/SkImage.h"
-#include "third_party/skia/include/core/SkPicture.h"
+#include "flutter/fml/logging.h"
 
-namespace flow {
+namespace flutter {
 
+template <typename ID>
 class RasterCacheKey {
  public:
-  RasterCacheKey(const SkPicture& picture,
-#if defined(OS_FUCHSIA)
-                 float metrics_scale_x,
-                 float metrics_scale_y,
+  RasterCacheKey(ID id, const SkMatrix& ctm) : id_(id), matrix_(ctm) {
+    matrix_[SkMatrix::kMTransX] = SkScalarFraction(ctm.getTranslateX());
+    matrix_[SkMatrix::kMTransY] = SkScalarFraction(ctm.getTranslateY());
+#ifndef SUPPORT_FRACTIONAL_TRANSLATION
+    FML_DCHECK(matrix_.getTranslateX() == 0 && matrix_.getTranslateY() == 0);
 #endif
-                 const MatrixDecomposition& matrix)
-      : picture_id_(picture.uniqueID()),
-#if defined(OS_FUCHSIA)
-        metrics_scale_x_(metrics_scale_x),
-        metrics_scale_y_(metrics_scale_y),
-#endif
-        scale_key_(
-            SkISize::Make(matrix.scale().x() * 1e3, matrix.scale().y() * 1e3)) {
   }
 
-  uint32_t picture_id() const { return picture_id_; }
-
-  const SkISize& scale_key() const { return scale_key_; }
-
-#if defined(OS_FUCHSIA)
-  float metrics_scale_x() const { return metrics_scale_x_; }
-  float metrics_scale_y() const { return metrics_scale_y_; }
-#endif
+  ID id() const { return id_; }
+  const SkMatrix& matrix() const { return matrix_; }
 
   struct Hash {
-    std::size_t operator()(RasterCacheKey const& key) const {
-      return key.picture_id_;
+    uint32_t operator()(RasterCacheKey const& key) const {
+      return std::hash<ID>()(key.id_);
     }
   };
 
   struct Equal {
     constexpr bool operator()(const RasterCacheKey& lhs,
                               const RasterCacheKey& rhs) const {
-      return lhs.picture_id_ == rhs.picture_id_ &&
-#if defined(OS_FUCHSIA)
-             lhs.metrics_scale_x_ == rhs.metrics_scale_x_ &&
-
-             lhs.metrics_scale_y_ == rhs.metrics_scale_y_ &&
-#endif
-             lhs.scale_key_ == rhs.scale_key_;
+      return lhs.id_ == rhs.id_ && lhs.matrix_ == rhs.matrix_;
     }
   };
 
@@ -62,14 +42,23 @@ class RasterCacheKey {
   using Map = std::unordered_map<RasterCacheKey, Value, Hash, Equal>;
 
  private:
-  uint32_t picture_id_;
-#if defined(OS_FUCHSIA)
-  float metrics_scale_x_;
-  float metrics_scale_y_;
-#endif
-  SkISize scale_key_;
+  ID id_;
+
+  // ctm where only fractional (0-1) translations are preserved:
+  //   matrix_ = ctm;
+  //   matrix_[SkMatrix::kMTransX] = SkScalarFraction(ctm.getTranslateX());
+  //   matrix_[SkMatrix::kMTransY] = SkScalarFraction(ctm.getTranslateY());
+  SkMatrix matrix_;
 };
 
-}  // namespace flow
+// The ID is the uint32_t picture uniqueID
+using PictureRasterCacheKey = RasterCacheKey<uint32_t>;
+
+class Layer;
+
+// The ID is the uint64_t layer unique_id
+using LayerRasterCacheKey = RasterCacheKey<uint64_t>;
+
+}  // namespace flutter
 
 #endif  // FLUTTER_FLOW_RASTER_CACHE_KEY_H_
